@@ -49,9 +49,10 @@ jobs:
                  -exec cp {} release-artifacts/ \;
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: "IntentReactor ${{ github.ref_name }}"
-          tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
-          files: release-artifacts/*.jar
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "IntentReactor ${{ github.ref_name }}" \
+            --generate-notes \
+            release-artifacts/*.jar
