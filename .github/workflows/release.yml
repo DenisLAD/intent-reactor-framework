@@ -32,7 +32,7 @@ jobs:
         run: mvn versions:set -DnewVersion=${{ steps.version.outputs.VERSION }} -DgenerateBackupPoms=false
 
       - name: Build and package
-        run: mvn clean install -DskipTests
+        run: mvn clean install -Prelease -DskipTests
 
       - name: Run tests
         run: mvn test
@@ -42,8 +42,6 @@ jobs:
           mkdir -p release-artifacts
           find . -path ./release-artifacts -prune -o \
                  -name "*.jar" \
-                 ! -name "*-javadoc.jar" \
-                 ! -name "*-sources.jar" \
                  -path "*/target/*" \
                  -print \
                  -exec cp {} release-artifacts/ \;
