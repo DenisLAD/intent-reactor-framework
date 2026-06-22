@@ -8,7 +8,7 @@
     <parent>
         <groupId>com.intentreactor</groupId>
         <artifactId>intent-reactor-parent</artifactId>
-        <version>0.1.6</version>
+        <version>0.1.8</version>
     </parent>
 
     <artifactId>intent-reactor-rag</artifactId>
