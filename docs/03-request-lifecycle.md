@@ -70,7 +70,11 @@ If `"pendingStep"` exists in session attributes (set during a previous confirmat
 11. **Reconstruct current intent** from `"originalIntent"` attribute or from the goal description.
 
 12. **Call `Planner.plan(session, intent)`**
-    - The planner sends the session's message history (with system prompt + tool list) to the LLM.
+    - For `DefaultReACTPlanner` / `ReflexionPlanner`, the planner runs the message history through two extension pipelines before sending it to the LLM (see [08-context-window.md](08-context-window.md)):
+      1. **`MessageContextPreProcessor`** chain — on the full session list (before sliding window)
+      2. Sliding window + pinned-message re-insertion
+      3. **`MessageContextPostProcessor`** chain — on the windowed list (compression, deduplication, etc.)
+    - `LATSPlanner` does not use these pipelines.
     - Returns a `Plan` with one or more `PlanStep` objects.
 
 ### 5c. Execute plan steps

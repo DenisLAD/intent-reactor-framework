@@ -84,10 +84,6 @@ intent-reactor:
       # 0 = unlimited.
       max-message-chars: 8000
 
-      # Separate limit for take_snapshot tool result messages (DOM captures).
-      # 0 = unlimited.
-      max-snapshot-chars: 30000
-
       # Appended to messages that were truncated.
       truncation-suffix: "... [truncated]"
 
@@ -290,7 +286,6 @@ intent-reactor:
 | `planning.storm.questions-per-perspective` | int | `3` |
 | `planning.context-window.max-messages` | int | `20` |
 | `planning.context-window.max-message-chars` | int | `8000` |
-| `planning.context-window.max-snapshot-chars` | int | `30000` |
 | `planning.context-window.compression.enabled` | boolean | `false` |
 | `planning.context-window.compression.max-tokens` | int | `4000` |
 | `planning.context-window.compression.trigger-ratio` | double | `0.85` |

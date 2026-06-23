@@ -73,9 +73,6 @@ intent-reactor:
       # Обрезать отдельные сообщения длиннее N символов. 0 = без ограничений.
       max-message-chars: 8000
 
-      # Отдельный лимит для результатов инструмента take_snapshot.
-      max-snapshot-chars: 30000
-
       # Добавляется к обрезанным сообщениям.
       truncation-suffix: "... [обрезано]"
 
@@ -229,7 +226,6 @@ intent-reactor:
 | `planning.storm.questions-per-perspective` | int | `3` |
 | `planning.context-window.max-messages` | int | `20` |
 | `planning.context-window.max-message-chars` | int | `8000` |
-| `planning.context-window.max-snapshot-chars` | int | `30000` |
 | `planning.context-window.compression.enabled` | boolean | `false` |
 | `planning.context-window.compression.max-tokens` | int | `4000` |
 | `planning.context-window.compression.trigger-ratio` | double | `0.85` |

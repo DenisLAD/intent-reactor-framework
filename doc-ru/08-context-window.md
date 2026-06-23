@@ -4,6 +4,62 @@
 
 ---
 
+## Конвейер обработки сообщений
+
+Перед каждым вызовом `DefaultReACTPlanner` / `ReflexionPlanner` история сообщений проходит два упорядоченных конвейера расширений. **`LATSPlanner` эти конвейеры не использует.**
+
+### MessageContextPreProcessor
+
+Запускается на **полном списке сообщений сессии** до применения скользящего окна. Подходит для инжекции вводных сообщений или глобальной фильтрации категорий.
+
+```java
+@Component
+public class InjectPreamblePre implements MessageContextPreProcessor {
+
+    @Override
+    public List<Message> process(List<Message> allMessages, SessionState session) {
+        List<Message> result = new ArrayList<>(allMessages);
+        result.add(0, Message.system("Отвечай только на русском языке."));
+        return result;
+    }
+
+    @Override
+    public int getOrder() { return -100; }
+}
+```
+
+### MessageContextPostProcessor
+
+Запускается на **списке сообщений в окне** после применения скользящего окна, до преобразования в типы LLM. Получает `MessageBuildContext`, который предоставляет:
+- `getEvictedMessages()` — сообщения, вытесненные из окна (полезно для компрессии)
+- `setCharLimit(message, limit)` — переопределение лимита символов для конкретного сообщения, учитываемое шагом обрезки
+
+```java
+@Component
+public class DeduplicateSnapshotPost implements MessageContextPostProcessor {
+
+    @Override
+    public List<Message> process(List<Message> messages, MessageBuildContext ctx) {
+        // оставить только последний результат take_snapshot
+        // ...
+        return deduped;
+    }
+
+    @Override
+    public int getOrder() { return 0; }  // запуск до компрессии
+}
+```
+
+Рекомендуемые значения порядка:
+
+| Порядок | Назначение |
+|---|---|
+| `0` | Дедупликация снимков, нормализация контента |
+| `200` | LLM-компрессия (`MessageCompressor`) |
+| `Integer.MAX_VALUE - 100` | Встроенный `MessageCompressor`: `Ordered.LOWEST_PRECEDENCE - 100` |
+
+---
+
 ## Скользящее окно
 
 Базовый контроль: хранить только N последних сообщений.
@@ -28,25 +84,18 @@ intent-reactor:
   planning:
     context-window:
       max-message-chars: 8000     # по умолчанию; 0 = без ограничений
-      max-snapshot-chars: 30000   # по умолчанию; применяется к результатам take_snapshot
       truncation-suffix: "... [обрезано]"
 ```
 
-`max-snapshot-chars` применяется специально к сообщениям, начинающимся с `[TOOL_RESULT] take_snapshot:`. DOM-снимки могут быть очень большими — отдельный лимит позволяет допускать для них больший размер, не увеличивая лимит для обычных сообщений.
-
----
-
-## Дедупликация снимков
-
-Инструмент `take_snapshot` (используется в сценариях автоматизации браузера) может вызываться многократно, создавая почти одинаковые большие SYSTEM-сообщения. Фреймворк автоматически удаляет устаревшие снимки, оставляя только **самый последний**.
-
-Дедупликация выполняется в `DefaultReACTPlanner.buildMessages()` перед построением промпта, поэтому хранилище сессий не затрагивается — дедупликации подвергаются только сообщения, отправляемые LLM.
+Для сообщений, которым обоснованно нужен больший лимит (например, DOM-снимки при автоматизации браузера), зарегистрируйте `MessageContextPostProcessor` и вызовите `context.setCharLimit(message, largerLimit)` для нужных сообщений. Шаг обрезки читает эти переопределения.
 
 ---
 
 ## LLM-компрессия контекста
 
 Когда скользящего окна недостаточно, включите компрессию на основе токенов. Старые сообщения, вышедшие за границу окна, суммируются LLM и возвращаются в историю как единое сообщение с префиксом `[ИСТОРИЯ ДИАЛОГА]`.
+
+Встроенная реализация — `MessageCompressor`. Он автоматически регистрируется как `MessageContextPostProcessor` с порядком `Ordered.LOWEST_PRECEDENCE - 100` при включённой компрессии.
 
 ```yaml
 intent-reactor:
@@ -62,11 +111,12 @@ intent-reactor:
 
 **Как работает:**
 
-1. После построения списка сообщений планировщик оценивает общее количество токенов: `totalChars / charsPerToken`.
-2. Если `estimatedTokens > maxTokens × triggerRatio`, сообщения **за пределами** скользящего окна (кроме закреплённых) передаются LLM с промптом компрессии.
+1. После прохождения конвейера постпроцессоров `MessageCompressor` оценивает общее количество токенов: `totalChars / charsPerToken`.
+2. Если `estimatedTokens > maxTokens × triggerRatio`, вытесненные сообщения из `MessageBuildContext.getEvictedMessages()` передаются LLM с промптом компрессии.
 3. LLM возвращает краткое резюме.
-4. Резюме вставляется на позицию 1 (сразу после системного промпта) как `UserMessage`.
-5. Публикуется `ContextCompressedEvent`.
+4. Резюме вставляется на позицию 0 списка сообщений в окне как `UserMessage`.
+5. Результат кешируется в `session.attributes["_contextSummary"]` с ключом по количеству вытесненных сообщений — чтобы избежать лишних вызовов LLM при повторных итерациях `plan()` в той же сессии.
+6. Публикуется `ContextCompressedEvent`.
 
 > **Примечание:** компрессия отключена по умолчанию (`enabled: false`), так как требует дополнительного вызова LLM. Включайте только для сессий с большим количеством итераций.
 
@@ -96,7 +146,6 @@ intent-reactor:
     context-window:
       max-messages: 20              # размер скользящего окна (0 = без ограничений)
       max-message-chars: 8000       # лимит символов на сообщение (0 = без ограничений)
-      max-snapshot-chars: 30000     # лимит для сообщений take_snapshot
       truncation-suffix: "... [обрезано]"
       compression:
         enabled: false

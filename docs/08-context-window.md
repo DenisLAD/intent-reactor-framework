@@ -4,6 +4,63 @@ Long conversations accumulate hundreds of messages, eventually exceeding the LLM
 
 ---
 
+## Message processing pipeline
+
+Before every `DefaultReACTPlanner` / `ReflexionPlanner` call, the message history passes through two ordered extension pipelines. **`LATSPlanner` does not use these pipelines.**
+
+### MessageContextPreProcessor
+
+Runs on the **full session message list** before the sliding window is applied. Useful for injecting warm-up messages or globally filtering message categories.
+
+```java
+@Component
+public class InjectPreamblePre implements MessageContextPreProcessor {
+
+    @Override
+    public List<Message> process(List<Message> allMessages, SessionState session) {
+        // inject a reminder at the top before windowing
+        List<Message> result = new ArrayList<>(allMessages);
+        result.add(0, Message.system("Always respond in English."));
+        return result;
+    }
+
+    @Override
+    public int getOrder() { return -100; }
+}
+```
+
+### MessageContextPostProcessor
+
+Runs on the **windowed message list** after the sliding window has been applied, before conversion to LLM types. Receives a `MessageBuildContext` that exposes:
+- `getEvictedMessages()` — messages pushed out of the window (useful for compression)
+- `setCharLimit(message, limit)` — per-message character limit override, read by the truncation step
+
+```java
+@Component
+public class DeduplicateSnapshotPost implements MessageContextPostProcessor {
+
+    @Override
+    public List<Message> process(List<Message> messages, MessageBuildContext ctx) {
+        // keep only the most recent take_snapshot result
+        // ...
+        return deduped;
+    }
+
+    @Override
+    public int getOrder() { return 0; }  // run before compression
+}
+```
+
+Recommended order values:
+
+| Order | Purpose |
+|---|---|
+| `0` | Snapshot deduplication, content normalization |
+| `200` | LLM-based compression (`MessageCompressor`) |
+| `Integer.MAX_VALUE - 100` | `MessageCompressor` built-in: `Ordered.LOWEST_PRECEDENCE - 100` |
+
+---
+
 ## Sliding window
 
 The most basic control: keep only the most recent N messages.
@@ -28,25 +85,18 @@ intent-reactor:
   planning:
     context-window:
       max-message-chars: 8000     # default; 0 = unlimited
-      max-snapshot-chars: 30000   # default; applied to take_snapshot tool results
       truncation-suffix: "... [truncated]"  # appended when truncated
 ```
 
-`max-snapshot-chars` applies specifically to messages whose content starts with `[TOOL_RESULT] take_snapshot:`. DOM snapshots tend to be very large; this allows a higher limit for them while keeping regular messages shorter.
-
----
-
-## Snapshot deduplication
-
-The `take_snapshot` tool (used in browser-automation scenarios) may be called many times, producing near-duplicate large SYSTEM messages. The framework automatically removes stale snapshots, keeping only the **most recent** one.
-
-This happens in `DefaultReACTPlanner.buildMessages()` before constructing the prompt, so session storage is unaffected — only the messages sent to the LLM are deduplicated.
+For messages that legitimately need a larger limit (e.g., DOM snapshots from browser automation), register a `MessageContextPostProcessor` and call `context.setCharLimit(message, largerLimit)` for the relevant messages. The truncation step reads these overrides.
 
 ---
 
 ## LLM-based context compression
 
 When the sliding window alone is not sufficient, enable token-aware compression. Old messages that have scrolled out of the window are summarized by the LLM and injected back as a single `[ИСТОРИЯ ДИАЛОГА]` (dialog history) prefix message.
+
+`MessageCompressor` is the built-in implementation; it is registered automatically as a `MessageContextPostProcessor` at order `Ordered.LOWEST_PRECEDENCE - 100` when compression is enabled.
 
 ```yaml
 intent-reactor:
@@ -62,11 +112,12 @@ intent-reactor:
 
 **How it works:**
 
-1. After building the message list, the planner estimates the total token count as `totalChars / charsPerToken`.
-2. If `estimatedTokens > maxTokens × triggerRatio`, the messages **outside** the sliding window (excluding pinned messages) are passed to the LLM with the compression prompt.
+1. After the post-processor pipeline runs, `MessageCompressor` estimates the total token count as `totalChars / charsPerToken`.
+2. If `estimatedTokens > maxTokens × triggerRatio`, the evicted messages from `MessageBuildContext.getEvictedMessages()` are passed to the LLM with the compression prompt.
 3. The LLM returns a concise summary.
-4. The summary is inserted at position 1 (immediately after the system prompt) as a `UserMessage`.
-5. A `ContextCompressedEvent` is published.
+4. The summary is inserted at position 0 of the windowed list as a `UserMessage`.
+5. The result is cached in `session.attributes["_contextSummary"]`, keyed by the evicted-message count, to avoid redundant LLM calls on subsequent `plan()` iterations within the same session.
+6. A `ContextCompressedEvent` is published.
 
 > **Note:** Compression is disabled by default (`enabled: false`) because it incurs an additional LLM call. Enable it only for sessions expected to run for many turns.
 
@@ -96,7 +147,6 @@ intent-reactor:
     context-window:
       max-messages: 20              # sliding window size (0 = unlimited)
       max-message-chars: 8000       # per-message char limit (0 = unlimited)
-      max-snapshot-chars: 30000     # limit for take_snapshot messages
       truncation-suffix: "... [truncated]"
       compression:
         enabled: false

@@ -65,7 +65,7 @@ intent-reactor:
     parallel-timeout: PT60S   # per-intent timeout (default)
 ```
 
-Each intent runs in a **cloned session** (independent `SessionState` with a derived ID like `originalId-parallel-weatherlookup`). All clones run concurrently via `CompletableFuture`.
+Each intent runs in a **cloned session** (independent `SessionState` with a derived ID like `originalId-parallel-weatherlookup`). All clones run concurrently via `CompletableFuture`, dispatched to the `intentReactorParallelExecutor` bean (a cached-thread-pool with daemon threads). Override the executor by declaring your own `ExecutorService` bean named `intentReactorParallelExecutor`.
 
 Behaviors:
 - If an intent times out (`parallel-timeout`), its future is cancelled and a `FAILED` result is recorded for that intent.
