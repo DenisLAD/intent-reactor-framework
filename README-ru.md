@@ -4,6 +4,7 @@
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5-6DB33F?logo=springboot&logoColor=white)
 ![Spring AI](https://img.shields.io/badge/Spring%20AI-1.1-6DB33F?logo=spring&logoColor=white)
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue)
+[![MvnRepository](https://badges.mvnrepository.com/badge/com.intentreactor/intent-reactor-mcp-server/badge.svg?label=MvnRepository)](https://mvnrepository.com/artifact/com.intentreactor/intent-reactor-mcp-server)
 
 **IntentReactor** — это Spring Boot Starter библиотека, которая добавляет в любое Spring Boot приложение LLM-управляемый анализ намерений и автономное планирование действий. Библиотека реализует паттерн [ReACT](https://arxiv.org/abs/2210.03629) (Reason + Act) и включает 14 взаимозаменяемых стратегий планирования — от классической цепочки мыслей до поиска по дереву Монте-Карло — переключаемых одним свойством конфигурации.
 
