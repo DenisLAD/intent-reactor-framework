@@ -34,6 +34,11 @@ package com.intentreactor.api;
  * <p>When {@code intent-reactor.planning.lats.allow-real-actions-in-simulation=true},
  * the LATS planner calls {@link Tool#execute} instead of {@link #simulate}.
  *
+ * <p>Callers check for this capability with {@code instanceof SimulatableTool} — this is
+ * intentional. Adding {@code canSimulate()} to the base {@link Tool} interface would pollute
+ * it with LATS-specific concerns; the {@code instanceof} pattern is the correct Java idiom
+ * for optional capabilities expressed via marker sub-interfaces.
+ *
  * @see Tool
  * @see ToolInput
  * @see ToolResult

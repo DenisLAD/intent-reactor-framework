@@ -20,6 +20,7 @@ import com.intentreactor.api.ToolInput;
 import com.intentreactor.api.ToolProvider;
 import com.intentreactor.api.ToolResult;
 import com.intentreactor.core.config.IntentReactorProperties;
+import com.intentreactor.core.service.multiintent.SequentialMultiIntentStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,7 +28,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.List;
@@ -56,8 +56,6 @@ class IntentReactorServiceImplTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
     @Mock
-    private ChatClient chatClient;
-    @Mock
     private Tool echoTool;
 
     private IntentReactorServiceImpl service;
@@ -67,11 +65,11 @@ class IntentReactorServiceImplTest {
     void setUp() {
         properties = new IntentReactorProperties();
         properties.getPlanning().setAutonomous(true);
-        ConfirmationManager confirmationManager =
-                new DefaultConfirmationManager(properties);
+        ConfirmationManager confirmationManager = new DefaultConfirmationManager(properties);
+        ObjectMapper objectMapper = new ObjectMapper();
         service = new IntentReactorServiceImpl(preprocessor, planner, sessionStore,
                 toolProvider, eventPublisher, properties, confirmationManager,
-                chatClient, new ObjectMapper());
+                objectMapper, List.of(new SequentialMultiIntentStrategy(sessionStore)));
     }
 
     @Test

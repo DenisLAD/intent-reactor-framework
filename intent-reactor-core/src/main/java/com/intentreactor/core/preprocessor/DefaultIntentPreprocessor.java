@@ -7,6 +7,7 @@ import com.intentreactor.api.IntentPreprocessor;
 import com.intentreactor.api.Message;
 import com.intentreactor.api.SessionState;
 import com.intentreactor.core.config.IntentReactorProperties;
+import com.intentreactor.core.util.LlmResponseParser;
 import com.intentreactor.core.util.PromptLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,6 +19,7 @@ import org.springframework.ai.chat.prompt.Prompt;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class DefaultIntentPreprocessor implements IntentPreprocessor {
 
@@ -93,70 +95,14 @@ public class DefaultIntentPreprocessor implements IntentPreprocessor {
         return messages;
     }
 
+    private static final Set<String> INTENT_JSON_KEYS = Set.of("intents", "reasoningSuggestion");
+
     @SuppressWarnings("unchecked")
     protected IntentAnalysisResult parseResponse(String response) throws Exception {
-        String json = extractJson(response);
+        String json = LlmResponseParser.extractJson(response, objectMapper, INTENT_JSON_KEYS);
         IntentAnalysisResult result = objectMapper.readValue(json, IntentAnalysisResult.class);
         Map<String, Object> raw = objectMapper.readValue(json, Map.class);
         result.setRawLLMOutput(raw);
-        return result;
-    }
-
-    private String extractJson(String response) {
-        if (response == null) throw new IllegalArgumentException("Empty LLM response");
-        List<String> candidates = extractAllJsonCandidates(stripMarkdownFences(response));
-        if (candidates.isEmpty())
-            throw new IllegalArgumentException("No JSON object found in response: " + response);
-        // Prefer the candidate that contains intent analysis keys.
-        for (String candidate : candidates) {
-            try {
-                Map<?, ?> m = objectMapper.readValue(candidate, Map.class);
-                if (m.containsKey("intents") || m.containsKey("reasoningSuggestion")) return candidate;
-            } catch (Exception ignored) {
-            }
-        }
-        return candidates.get(candidates.size() - 1);
-    }
-
-    private String stripMarkdownFences(String response) {
-        String s = response.strip();
-        if (!s.startsWith("```")) return s;
-        int newline = s.indexOf('\n');
-        if (newline < 0) return s;
-        s = s.substring(newline + 1);
-        int closingFence = s.lastIndexOf("```");
-        if (closingFence >= 0) s = s.substring(0, closingFence);
-        return s.strip();
-    }
-
-    private List<String> extractAllJsonCandidates(String response) {
-        List<String> result = new ArrayList<>();
-        int depth = 0;
-        int start = -1;
-        boolean inString = false;
-        for (int i = 0; i < response.length(); i++) {
-            char c = response.charAt(i);
-            if (inString) {
-                if (c == '\\') {
-                    i++; // skip escaped character
-                } else if (c == '"') {
-                    inString = false;
-                }
-            } else {
-                if (c == '"') {
-                    inString = true;
-                } else if (c == '{') {
-                    if (depth == 0) start = i;
-                    depth++;
-                } else if (c == '}' && depth > 0) {
-                    depth--;
-                    if (depth == 0 && start >= 0) {
-                        result.add(response.substring(start, i + 1));
-                        start = -1;
-                    }
-                }
-            }
-        }
         return result;
     }
 

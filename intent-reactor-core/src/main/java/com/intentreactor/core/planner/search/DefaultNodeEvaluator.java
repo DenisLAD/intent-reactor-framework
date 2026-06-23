@@ -5,6 +5,7 @@ import com.intentreactor.api.Action;
 import com.intentreactor.api.SimpleAction;
 import com.intentreactor.api.ToolResult;
 import com.intentreactor.core.config.IntentReactorProperties;
+import com.intentreactor.core.util.LlmResponseParser;
 import com.intentreactor.core.util.PromptLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -121,51 +122,17 @@ public class DefaultNodeEvaluator implements NodeEvaluator {
         // This recovers the first N-1 actions when the N-th action is cut off.
         List<Action> result = new ArrayList<>();
         String fragment = response.substring(start);
-        int i = 0;
-        while (i < fragment.length()) {
-            int objStart = fragment.indexOf('{', i);
-            if (objStart < 0) break;
-
-            int depth = 0;
-            boolean inString = false;
-            boolean escaped = false;
-            int objEnd = -1;
-            for (int j = objStart; j < fragment.length(); j++) {
-                char c = fragment.charAt(j);
-                if (escaped) {
-                    escaped = false;
-                    continue;
-                }
-                if (c == '\\' && inString) {
-                    escaped = true;
-                    continue;
-                }
-                if (c == '"') {
-                    inString = !inString;
-                    continue;
-                }
-                if (inString) continue;
-                if (c == '{') depth++;
-                else if (c == '}') {
-                    depth--;
-                    if (depth == 0) {
-                        objEnd = j;
-                        break;
-                    }
-                }
-            }
-            if (objEnd < 0) break; // truncated object — nothing more to extract
-
+        for (String candidate : LlmResponseParser.extractAllJsonCandidates(fragment)) {
             try {
-                Map<String, Object> item = objectMapper.readValue(
-                        fragment.substring(objStart, objEnd + 1), Map.class);
+                @SuppressWarnings("unchecked")
+                Map<String, Object> item = objectMapper.readValue(candidate, Map.class);
                 String toolName = (String) item.get("toolName");
+                @SuppressWarnings("unchecked")
                 Map<String, Object> params = item.containsKey("parameters")
                         ? (Map<String, Object>) item.get("parameters") : Map.of();
                 if (toolName != null) result.add(new SimpleAction(toolName, params));
             } catch (Exception ignored) {
             }
-            i = objEnd + 1;
         }
         return result;
     }

@@ -7,6 +7,9 @@ import com.intentreactor.api.Action;
 import com.intentreactor.api.ConfirmationManager;
 import com.intentreactor.api.IntentPreprocessor;
 import com.intentreactor.api.IntentReactorService;
+import com.intentreactor.api.MessageContextPostProcessor;
+import com.intentreactor.api.MessageContextPreProcessor;
+import com.intentreactor.api.MultiIntentStrategy;
 import com.intentreactor.api.PlanStep;
 import com.intentreactor.api.Planner;
 import com.intentreactor.api.PromptContextProvider;
@@ -20,15 +23,18 @@ import com.intentreactor.core.planner.DefaultReACTPlanner;
 import com.intentreactor.core.planner.LATSPlanner;
 import com.intentreactor.core.planner.MessageCompressor;
 import com.intentreactor.core.planner.ReflexionPlanner;
-import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.core.planner.search.DefaultSearchTree;
 import com.intentreactor.core.planner.search.SearchTree;
 import com.intentreactor.core.preprocessor.DefaultIntentPreprocessor;
 import com.intentreactor.core.service.DefaultConfirmationManager;
 import com.intentreactor.core.service.IntentReactorServiceImpl;
+import com.intentreactor.core.service.multiintent.LlmDrivenMultiIntentStrategy;
+import com.intentreactor.core.service.multiintent.ParallelMultiIntentStrategy;
+import com.intentreactor.core.service.multiintent.SequentialMultiIntentStrategy;
 import com.intentreactor.core.session.FileSystemSessionStore;
 import com.intentreactor.core.session.InMemorySessionStore;
 import com.intentreactor.core.tool.DefaultToolProvider;
+import com.intentreactor.core.util.PromptLoader;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -42,6 +48,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @AutoConfiguration
 @EnableConfigurationProperties(IntentReactorProperties.class)
@@ -104,10 +113,13 @@ public class IntentReactorAutoConfiguration {
                                 IntentReactorProperties properties,
                                 ObjectMapper objectMapper,
                                 @Autowired(required = false) List<PromptContextProvider> promptContextProviders,
-                                @Autowired(required = false) MessageCompressor messageCompressor,
+                                @Autowired(required = false) List<MessageContextPreProcessor> preProcessors,
+                                @Autowired(required = false) List<MessageContextPostProcessor> postProcessors,
                                 @Autowired(required = false) io.micrometer.core.instrument.MeterRegistry meterRegistry) {
         List<PromptContextProvider> providers = promptContextProviders != null ? promptContextProviders : List.of();
-        Planner p = new DefaultReACTPlanner(chatClient, toolProvider, properties, objectMapper, providers, messageCompressor);
+        List<MessageContextPreProcessor> pre = preProcessors != null ? preProcessors : List.of();
+        List<MessageContextPostProcessor> post = postProcessors != null ? postProcessors : List.of();
+        Planner p = new DefaultReACTPlanner(chatClient, toolProvider, properties, objectMapper, providers, pre, post);
         return meterRegistry != null ? wrapWithMetrics(p, "react", meterRegistry) : p;
     }
 
@@ -121,15 +133,18 @@ public class IntentReactorAutoConfiguration {
                                     IntentReactorProperties properties,
                                     ObjectMapper objectMapper,
                                     @Autowired(required = false) List<PromptContextProvider> promptContextProviders,
-                                    @Autowired(required = false) MessageCompressor messageCompressor,
+                                    @Autowired(required = false) List<MessageContextPreProcessor> preProcessors,
+                                    @Autowired(required = false) List<MessageContextPostProcessor> postProcessors,
                                     @Autowired(required = false) io.micrometer.core.instrument.MeterRegistry meterRegistry) {
         List<PromptContextProvider> providers = promptContextProviders != null ? promptContextProviders : List.of();
-        Planner delegate = new DefaultReACTPlanner(chatClient, toolProvider, properties, objectMapper, providers, messageCompressor);
+        List<MessageContextPreProcessor> pre = preProcessors != null ? preProcessors : List.of();
+        List<MessageContextPostProcessor> post = postProcessors != null ? postProcessors : List.of();
+        Planner delegate = new DefaultReACTPlanner(chatClient, toolProvider, properties, objectMapper, providers, pre, post);
         Planner p = new ReflexionPlanner(delegate, chatClient, properties);
         return meterRegistry != null ? wrapWithMetrics(p, "reflexion", meterRegistry) : p;
     }
 
-    // ---- LATS planner ----
+    // ---- LATS planner (does not use buildMessages, no processors needed) ----
 
     @Bean
     @ConditionalOnMissingBean(Planner.class)
@@ -139,11 +154,43 @@ public class IntentReactorAutoConfiguration {
                                IntentReactorProperties properties,
                                ObjectMapper objectMapper,
                                @Autowired(required = false) List<PromptContextProvider> promptContextProviders,
-                               @Autowired(required = false) MessageCompressor messageCompressor,
                                @Autowired(required = false) io.micrometer.core.instrument.MeterRegistry meterRegistry) {
         List<PromptContextProvider> providers = promptContextProviders != null ? promptContextProviders : List.of();
-        Planner p = new LATSPlanner(chatClient, toolProvider, properties, objectMapper, providers, messageCompressor);
+        Planner p = new LATSPlanner(chatClient, toolProvider, properties, objectMapper, providers);
         return meterRegistry != null ? wrapWithMetrics(p, "lats", meterRegistry) : p;
+    }
+
+    // ---- Multi-intent strategies ----
+
+    @Bean
+    @ConditionalOnMissingBean(name = "intentReactorParallelExecutor")
+    public ExecutorService intentReactorParallelExecutor() {
+        return Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "intent-reactor-parallel-" + UUID.randomUUID().toString().substring(0, 8));
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    @Bean
+    public SequentialMultiIntentStrategy sequentialMultiIntentStrategy(SessionStore sessionStore) {
+        return new SequentialMultiIntentStrategy(sessionStore);
+    }
+
+    @Bean
+    public LlmDrivenMultiIntentStrategy llmDrivenMultiIntentStrategy(
+            SequentialMultiIntentStrategy sequentialMultiIntentStrategy,
+            ChatClient chatClient,
+            IntentReactorProperties properties,
+            ObjectMapper objectMapper) {
+        return new LlmDrivenMultiIntentStrategy(sequentialMultiIntentStrategy, chatClient, properties, objectMapper);
+    }
+
+    @Bean
+    public ParallelMultiIntentStrategy parallelMultiIntentStrategy(
+            ExecutorService intentReactorParallelExecutor,
+            IntentReactorProperties properties) {
+        return new ParallelMultiIntentStrategy(intentReactorParallelExecutor, properties);
     }
 
     // ---- Main service ----
@@ -157,11 +204,11 @@ public class IntentReactorAutoConfiguration {
                                                      ApplicationEventPublisher eventPublisher,
                                                      IntentReactorProperties properties,
                                                      ConfirmationManager confirmationManager,
-                                                     ChatClient chatClient,
-                                                     ObjectMapper objectMapper) {
+                                                     ObjectMapper objectMapper,
+                                                     List<MultiIntentStrategy> multiIntentStrategies) {
         return new IntentReactorServiceImpl(preprocessor, planner, sessionStore,
                 toolProvider, eventPublisher, properties, confirmationManager,
-                chatClient, objectMapper);
+                objectMapper, multiIntentStrategies);
     }
 
     // ---- Core infrastructure beans (declared explicitly — @ComponentScan is not allowed on @AutoConfiguration) ----

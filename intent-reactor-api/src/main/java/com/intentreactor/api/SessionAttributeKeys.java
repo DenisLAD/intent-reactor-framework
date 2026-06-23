@@ -18,5 +18,14 @@ public final class SessionAttributeKeys {
      */
     public static final String PIN_NEXT_USER_MESSAGE = "_pinNextUserMessage";
 
+    /**
+     * Session attribute key under which the {@link MultiIntentContext} is stored while
+     * multi-intent processing is in progress.
+     *
+     * <p>Used by {@code IntentReactorServiceImpl} and all {@link MultiIntentStrategy}
+     * implementations to share orchestration state across {@code plan()} iterations.
+     */
+    public static final String MULTI_INTENT_STATE_KEY = "multiIntentState";
+
     private SessionAttributeKeys() {}
 }

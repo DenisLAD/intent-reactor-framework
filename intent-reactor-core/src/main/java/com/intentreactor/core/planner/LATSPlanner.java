@@ -23,6 +23,7 @@ import com.intentreactor.core.planner.search.DefaultSearchTree;
 import com.intentreactor.core.planner.search.NodeEvaluator;
 import com.intentreactor.core.planner.search.SearchNode;
 import com.intentreactor.core.planner.search.SearchTree;
+import com.intentreactor.core.util.LlmResponseParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -113,7 +114,7 @@ public class LATSPlanner implements Planner {
             SearchTree tree = getOrCreateTree(sessionState, goal, cfg.getBranchingFactor());
             sessionState.getAttributes().put(LATS_GOAL_KEY, goal);
             tree.getRoot().getState().put("history", buildHistory(sessionState));
-            tree.getRoot().getState().put("tools", buildToolsDescription(tools));
+            tree.getRoot().getState().put("tools", LlmResponseParser.formatTools(tools, objectMapper));
             for (PromptContextProvider provider : promptContextProviders) {
                 tree.getRoot().getState().putAll(provider.getAdditionalVariables(sessionState));
             }
@@ -292,18 +293,6 @@ public class LATSPlanner implements Planner {
         }
 
         return stepsSimulated > 0 ? totalReward / stepsSimulated : 0.5;
-    }
-
-    private String buildToolsDescription(List<Tool> tools) {
-        StringBuilder sb = new StringBuilder();
-        for (Tool tool : tools) {
-            sb.append("- ").append(tool.getName()).append(": ").append(tool.getDescription()).append("\n");
-            try {
-                sb.append("  Parameters: ").append(objectMapper.writeValueAsString(tool.getParameterSchema())).append("\n");
-            } catch (Exception ignored) {
-            }
-        }
-        return sb.toString();
     }
 
     private String buildHistory(SessionState session) {

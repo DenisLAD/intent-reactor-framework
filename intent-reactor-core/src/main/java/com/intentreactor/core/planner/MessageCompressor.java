@@ -1,6 +1,8 @@
 package com.intentreactor.core.planner;
 
 import com.intentreactor.api.Message;
+import com.intentreactor.api.MessageBuildContext;
+import com.intentreactor.api.MessageContextPostProcessor;
 import com.intentreactor.api.SessionState;
 import com.intentreactor.api.event.ContextCompressedEvent;
 import com.intentreactor.core.config.IntentReactorProperties;
@@ -9,23 +11,25 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.core.Ordered;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Compresses old session messages into a concise LLM-generated summary.
- * Used by {@link DefaultReACTPlanner#buildMessages} when estimated token count
- * approaches the configured limit. The summary is cached in session.attributes
- * so that repeated plan() calls within the same session avoid redundant LLM calls.
+ * Compresses old session messages into a concise LLM-generated summary and injects it
+ * at the head of the context window as a {@code MessageContextPostProcessor}.
  *
- * <p>Token counting uses character-based approximation (chars / charsPerToken) to stay
- * proactive — real token counts from the API arrive only after the request is sent.
+ * <p>Fires when the estimated token count of the windowed messages exceeds
+ * {@code triggerRatio * maxTokens}. The summary is cached in
+ * {@code session.attributes[_contextSummary]} keyed by the evicted-message count so that
+ * repeated {@code plan()} calls within the same session avoid redundant LLM calls.
  *
- * <p>When compression fires (not from cache), a {@link ContextCompressedEvent} is published
- * so that SSE bridges and audit listeners can surface the event to the user.
+ * <p>On a fresh compression (not from cache), a {@link ContextCompressedEvent} is published
+ * so SSE bridges and audit listeners can surface the event to the user.
  */
-public class MessageCompressor {
+public class MessageCompressor implements MessageContextPostProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(MessageCompressor.class);
 
@@ -48,12 +52,42 @@ public class MessageCompressor {
     }
 
     /**
-     * Estimates the total token count of the given Spring AI messages using character approximation.
+     * Runs after snapshot deduplication (order 0). Injects an LLM-generated summary of evicted
+     * messages at position 0 of the window list if estimated tokens exceed the threshold.
      */
-    public int estimateTokens(List<org.springframework.ai.chat.messages.Message> messages) {
+    @Override
+    public int getOrder() {
+        return Ordered.LOWEST_PRECEDENCE - 100;
+    }
+
+    @Override
+    public List<Message> process(List<Message> messages, MessageBuildContext context) {
+        IntentReactorProperties.CompressionConfig comp =
+                properties.getPlanning().getContextWindow().getCompression();
+        if (!comp.isEnabled()) return messages;
+
+        List<Message> evicted = context.getEvictedMessages();
+        if (evicted.isEmpty()) return messages;
+
+        int estimated = estimateTokens(messages);
+        int threshold = (int) (comp.getMaxTokens() * comp.getTriggerRatio());
+        if (estimated <= threshold) return messages;
+
+        String summary = compress(evicted, context.getSession());
+        if (summary.isBlank()) return messages;
+
+        List<Message> result = new ArrayList<>(messages.size() + 1);
+        result.add(Message.user("[ИСТОРИЯ ДИАЛОГА]\n" + summary));
+        result.addAll(messages);
+        log.debug("[MessageCompressor] compression triggered: estimated={} tokens (threshold={}), compressed {} evicted messages",
+                estimated, threshold, evicted.size());
+        return result;
+    }
+
+    int estimateTokens(List<Message> messages) {
         int charsPerToken = properties.getPlanning().getContextWindow().getCompression().getCharsPerToken();
         int totalChars = messages.stream()
-                .mapToInt(m -> m.getText() == null ? 0 : m.getText().length())
+                .mapToInt(m -> m.getContent() == null ? 0 : m.getContent().length())
                 .sum();
         return totalChars / Math.max(1, charsPerToken);
     }
@@ -62,16 +96,9 @@ public class MessageCompressor {
      * Compresses {@code oldMessages} into a single summary string via LLM.
      *
      * <p>Result is cached in {@code session.attributes[_contextSummary]} keyed by
-     * {@code _contextSummaryUpTo = oldMessages.size()}. The cache is reused as long as
-     * the old-messages group doesn't grow (i.e., the sliding window hasn't advanced further).
-     *
-     * <p>On a fresh compression (not from cache), publishes a {@link ContextCompressedEvent}.
-     *
-     * @param oldMessages API-layer messages that have been pushed out of the context window
-     * @param session     current session (used for caching; attributes are mutated in-place)
-     * @return compressed summary text; empty string on LLM failure
+     * {@code _contextSummaryUpTo = oldMessages.size()}.
      */
-    public String compress(List<Message> oldMessages, SessionState session) {
+    String compress(List<Message> oldMessages, SessionState session) {
         int currentOldSize = oldMessages.size();
 
         Object cached = session.getAttributes().get(ATTR_SUMMARY);

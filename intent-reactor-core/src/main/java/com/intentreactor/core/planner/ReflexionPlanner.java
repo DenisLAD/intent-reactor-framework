@@ -5,6 +5,7 @@ import com.intentreactor.api.Message;
 import com.intentreactor.api.Plan;
 import com.intentreactor.api.Planner;
 import com.intentreactor.api.SessionState;
+import com.intentreactor.core.MessageMarkers;
 import com.intentreactor.core.config.IntentReactorProperties;
 import com.intentreactor.core.util.PromptLoader;
 import org.slf4j.Logger;
@@ -50,8 +51,8 @@ public class ReflexionPlanner implements Planner {
 
         try {
             String reflection = generateReflection(session);
-            session.addMessage(Message.system("[REFLECTION] " + reflection));
-            session.addMessage(Message.system("[HINT] Previous action failed. Based on the reflection above, try a different approach or a different tool."));
+            session.addMessage(Message.system(MessageMarkers.REFLECTION + " " + reflection));
+            session.addMessage(Message.system(MessageMarkers.HINT + " Previous action failed. Based on the reflection above, try a different approach or a different tool."));
             session.getAttributes().put(REFLEXION_COUNT_KEY, currentCount + 1);
             log.debug("Generated reflection #{} for session {}", currentCount + 1, session.getId());
         } catch (Exception e) {
@@ -65,7 +66,7 @@ public class ReflexionPlanner implements Planner {
         // added after [TOOL_ERROR] would previously mask the failure with reduce((a,b)->b).
         int checkCount = Math.min(5, messages.size());
         return messages.subList(messages.size() - checkCount, messages.size()).stream()
-                .anyMatch(m -> m.getContent() != null && m.getContent().contains("[TOOL_ERROR]"));
+                .anyMatch(m -> m.getContent() != null && m.getContent().contains(MessageMarkers.TOOL_ERROR));
     }
 
     private String generateReflection(SessionState session) {

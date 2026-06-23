@@ -66,7 +66,6 @@ public class IntentReactorProperties {
     public static class ContextWindowConfig {
         private int maxMessages = 20;
         private int maxMessageChars = 8000;
-        private int maxSnapshotChars = 30000;
         private String truncationSuffix = "... [truncated]";
         private CompressionConfig compression = new CompressionConfig();
     }

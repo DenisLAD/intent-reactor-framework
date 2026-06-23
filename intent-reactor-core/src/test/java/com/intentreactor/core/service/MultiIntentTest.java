@@ -16,6 +16,9 @@ import com.intentreactor.api.SimplePlan;
 import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.ToolProvider;
 import com.intentreactor.core.config.IntentReactorProperties;
+import com.intentreactor.core.service.multiintent.LlmDrivenMultiIntentStrategy;
+import com.intentreactor.core.service.multiintent.ParallelMultiIntentStrategy;
+import com.intentreactor.core.service.multiintent.SequentialMultiIntentStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,6 +33,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -64,9 +68,15 @@ class MultiIntentTest {
         properties = new IntentReactorProperties();
         properties.getPlanning().setAutonomous(true);
         ConfirmationManager confirmationManager = new DefaultConfirmationManager(properties);
+        ObjectMapper objectMapper = new ObjectMapper();
+        SequentialMultiIntentStrategy sequential = new SequentialMultiIntentStrategy(sessionStore);
+        LlmDrivenMultiIntentStrategy llmDriven = new LlmDrivenMultiIntentStrategy(
+                sequential, chatClient, properties, objectMapper);
+        ParallelMultiIntentStrategy parallel = new ParallelMultiIntentStrategy(
+                Executors.newCachedThreadPool(), properties);
         service = new IntentReactorServiceImpl(preprocessor, planner, sessionStore,
                 toolProvider, eventPublisher, properties, confirmationManager,
-                chatClient, new ObjectMapper());
+                objectMapper, List.of(sequential, llmDriven, parallel));
 
         when(sessionStore.findById(anyString())).thenReturn(Optional.empty());
         when(toolProvider.getAvailableTools(any())).thenReturn(List.of());
