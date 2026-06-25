@@ -6,14 +6,14 @@
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue)
 [![MvnRepository](https://badges.mvnrepository.com/badge/com.intentreactor/intent-reactor-mcp-server/badge.svg?label=MvnRepository)](https://mvnrepository.com/artifact/com.intentreactor/intent-reactor-mcp-server)
 
-**IntentReactor** is a Spring Boot starter library that brings LLM-powered intent analysis and autonomous action planning to any Spring Boot application. It implements the [ReACT](https://arxiv.org/abs/2210.03629) (Reason + Act) paradigm and ships 14 interchangeable planning strategies — from vanilla chain-of-thought to Monte Carlo tree search — all configured with a single property.
+**IntentReactor** is a Spring Boot starter library that brings LLM-powered intent analysis and autonomous action planning to any Spring Boot application. It implements the [ReACT](https://arxiv.org/abs/2210.03629) (Reason + Act) paradigm and ships 18 interchangeable planning strategies — from vanilla chain-of-thought to Monte Carlo tree search — all configured with a single property.
 
 ---
 
 ## Features
 
 - **ReACT planning loop** — iterative Thought → Action → Observation cycle driven by any Spring AI `ChatClient`
-- **14 built-in planning strategies** — ReACT, Reflexion, LATS (MCTS), CoT, Zero-Shot CoT, Step-Back, Tree-of-Thoughts, Graph-of-Thoughts, STORM, Self-Ask, Least-to-Most, Plan-and-Solve, Reflection, Self-Discover
+- **18 built-in planning strategies** — ReACT, Reflexion, LATS (MCTS), CoT, Zero-Shot CoT, Step-Back, Tree-of-Thoughts, Graph-of-Thoughts, STORM, Self-Ask, Least-to-Most, Plan-and-Solve, Reflection, Self-Discover, ReTreVal, MAP, HTP, KnowAgent
 - **Multi-intent dispatch** — automatically decomposes compound user requests into sequential, parallel, or LLM-ordered sub-plans
 - **Tool confirmation flow** — risky tools pause execution and return `AWAITING_CONFIRMATION`; resumed via `proceedAfterConfirmation()`
 - **Pluggable session stores** — in-memory, filesystem, JDBC, and JPA implementations out of the box
@@ -44,7 +44,7 @@
 <dependency>
     <groupId>com.intentreactor</groupId>
     <artifactId>intent-reactor-spring-boot-starter</artifactId>
-    <version>0.1.12</version>
+    <version>0.1.13</version>
 </dependency>
 ```
 
@@ -156,7 +156,7 @@ Optional add-ons:
 ├── intent-reactor-rag              RAG KnowledgeSource + knowledge_search tool
 ├── intent-reactor-mcp-client       Consume remote MCP servers as local tools
 ├── intent-reactor-mcp-server       Expose IntentReactor as an MCP server
-└── intent-reactor-strategies       14 extra planning strategies (CoT, ToT, GoT, STORM, …)
+└── intent-reactor-strategies       18 extra planning strategies (CoT, ToT, GoT, STORM, HTP, MAP, …)
 ```
 
 ---
@@ -181,6 +181,10 @@ Select a strategy with `intent-reactor.planning.strategy`:
 | Graph of Thoughts | `got` | Merges and scores thought nodes in a graph |
 | Self-Discover | `self-discover` | Selects and adapts reasoning modules at runtime |
 | STORM | `storm` | Multi-perspective research and synthesis |
+| ReTreVal | `retreval` | Reasoning tree with dual validation and typed-failure backtracking |
+| MAP | `map` | Five specialised cognitive modules: decompose, predict, evaluate, monitor, coordinate |
+| HTP | `htp` | Hierarchical Tree Planning: constrained subgoal decomposition with iterative refinement |
+| KnowAgent | `knowagent` | Builds an Action Knowledge Base (preconditions/postconditions) and filters invalid tools |
 
 ---
 

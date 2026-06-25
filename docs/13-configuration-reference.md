@@ -18,7 +18,8 @@ intent-reactor:
     # Planning strategy value. See docs/strategies/ for details on each.
     # Values: react | reflexion | lats | cot | zero-shot-cot | step-back |
     #         reflection | self-ask | least-to-most | plan-and-solve |
-    #         tot | got | self-discover | storm
+    #         tot | got | self-discover | storm |
+    #         retreval | map | htp | knowagent
     strategy: react
 
     # Maximum number of Planner.plan() iterations before a FAIL step is emitted.
@@ -73,6 +74,51 @@ intent-reactor:
     storm:
       max-perspectives: 5       # number of expert perspectives generated
       questions-per-perspective: 3
+
+    # ─── Strategies-module fine-tuning (intent-reactor-strategies) ───────────
+    # These properties are under StrategiesProperties and only apply when the
+    # corresponding strategy is active.
+    strategies:
+      reflection:
+        max-iterations: 3
+        satisfaction-threshold: 0.8
+      tot:
+        search-algorithm: bfs      # bfs | dfs | beam
+        beam-width: 3
+        thoughts-per-step: 3
+        max-depth: 5
+      got:
+        max-operations: 10
+        aggregation-threshold: 0.7
+      self-discover:
+        module-count: 5
+      storm:
+        perspective-count: 3
+        max-research-steps: 5
+      self-ask:
+        max-sub-questions: 5
+      least-to-most:
+        max-subproblems: 5
+      plan-and-solve:
+        max-plan-steps: 8
+      retreval:
+        max-tree-depth: 4          # maximum depth of the reasoning tree
+        candidates-per-step: 3    # candidate nodes generated per EXPAND phase
+        validation-threshold: 0.6 # minimum critic score to accept a node
+      map:
+        max-subtasks: 5
+        progress-threshold: 0.8   # Evaluator score above which goal is considered done
+        use-conflict-monitor: true # activate ConflictMonitor module on tool errors
+        use-state-predictor: false # activate optional StatePredictor module
+        eval-interval-steps: 3    # run Evaluator every N steps
+      htp:
+        max-subgoals: 4            # maximum number of decomposed subgoals
+        max-steps-per-node: 5     # maximum plan steps per subgoal
+        refinement-enabled: true  # run REFINE phase after each subgoal
+        max-refinement-retries: 2 # retries before marking subgoal as FAILED
+      know-agent:
+        enrich-knowledge: false    # true = enrich KB with an LLM call (extra latency)
+        filter-by-preconditions: true # filter tools whose preconditions are unmet
 
     # ─── Context window ───────────────────────────────────────────────────────
     context-window:
@@ -297,6 +343,19 @@ intent-reactor:
 | `tools.dynamic-scripting.script-repository` | String | `in-memory` |
 | `rag.enabled` | boolean | `true` |
 | `rag.max-results` | int | `5` |
+| `planning.strategies.retreval.max-tree-depth` | int | `4` |
+| `planning.strategies.retreval.candidates-per-step` | int | `3` |
+| `planning.strategies.retreval.validation-threshold` | double | `0.6` |
+| `planning.strategies.map.max-subtasks` | int | `5` |
+| `planning.strategies.map.progress-threshold` | double | `0.8` |
+| `planning.strategies.map.use-conflict-monitor` | boolean | `true` |
+| `planning.strategies.map.eval-interval-steps` | int | `3` |
+| `planning.strategies.htp.max-subgoals` | int | `4` |
+| `planning.strategies.htp.max-steps-per-node` | int | `5` |
+| `planning.strategies.htp.refinement-enabled` | boolean | `true` |
+| `planning.strategies.htp.max-refinement-retries` | int | `2` |
+| `planning.strategies.know-agent.enrich-knowledge` | boolean | `false` |
+| `planning.strategies.know-agent.filter-by-preconditions` | boolean | `true` |
 | `mcp.client.enabled` | boolean | `false` |
 | `mcp.server.enabled` | boolean | `true` |
 | `mcp.server.expose-tools` | boolean | `true` |

@@ -1,6 +1,6 @@
 # Planning Strategies — Overview
 
-IntentReactor ships 14 planning strategies, from simple chain-of-thought prompting to multi-trajectory tree search. Strategies are selected at startup via a single property.
+IntentReactor ships 18 planning strategies, from simple chain-of-thought prompting to multi-trajectory tree search. Strategies are selected at startup via a single property.
 
 ---
 
@@ -12,7 +12,7 @@ intent-reactor:
     strategy: react   # change this value
 ```
 
-All 14 strategies share the same `IntentReactorService.process()` API. Changing the strategy requires no code changes — only the `application.yml` entry and, for non-core strategies, the corresponding Maven module.
+All 18 strategies share the same `IntentReactorService.process()` API. Changing the strategy requires no code changes — only the `application.yml` entry and, for non-core strategies, the corresponding Maven module.
 
 ---
 
@@ -34,6 +34,10 @@ All 14 strategies share the same `IntentReactorService.process()` API. Changing 
 | `got` | Graph of Thoughts | Graph aggregation | strategies | Summarization, merge, ranking tasks |
 | `self-discover` | Self-Discover | Meta-cognition | strategies | Novel tasks with no obvious structure |
 | `storm` | STORM | Expert-perspective synthesis | strategies | Long-form reports, comprehensive topics |
+| `retreval` | ReTreVal | Tree search + validation | strategies | Complex multi-step tasks requiring backtracking |
+| `map` | MAP (Modular Agentic Planner) | Multi-module orchestration | strategies | Tasks needing structured progress monitoring |
+| `htp` | HTP (HyperTree Planning) | Hierarchical decomposition | strategies | Goals with clear subgoal structure and constraints |
+| `knowagent` | KnowAgent | Knowledge-augmented ReACT | strategies | Tool-heavy tasks with complex precondition logic |
 
 ---
 
@@ -41,13 +45,13 @@ All 14 strategies share the same `IntentReactorService.process()` API. Changing 
 
 **`intent-reactor-core`** — always included via the starter. Provides: `react`, `reflexion`, `lats`.
 
-**`intent-reactor-strategies`** — add explicitly for the remaining 11 strategies:
+**`intent-reactor-strategies`** — add explicitly for the remaining 15 strategies:
 
 ```xml
 <dependency>
     <groupId>com.intentreactor</groupId>
     <artifactId>intent-reactor-strategies</artifactId>
-    <version>0.1.6</version>
+    <version>0.1.13</version>
 </dependency>
 ```
 
@@ -57,7 +61,11 @@ All 14 strategies share the same `IntentReactorService.process()` API. Changing 
 
 **Core strategies** (`react`, `reflexion`, `lats`) implement the full `Planner` interface and manage the ReACT iteration loop themselves.
 
-**Strategies module** planners are **decorators** over `react`. They run a preprocessing phase (CoT reasoning, perspective generation, etc.) that informs the goal passed to the underlying ReACT planner, which then handles tool execution. This means all 11 strategies support tools automatically.
+**Strategies module** planners fall into two sub-types:
+- **Decorators over `react`** — run a preprocessing phase that informs the goal before delegating to the underlying ReACT loop (`cot`, `zero-shot-cot`, `step-back`, `reflection`, `self-discover`, `knowagent`).
+- **Standalone planners** — manage their own tool-execution loop (`self-ask`, `least-to-most`, `plan-and-solve`, `tot`, `got`, `storm`, `retreval`, `map`, `htp`).
+
+All 15 strategies in the strategies module support tool access.
 
 ```
 Request
@@ -87,11 +95,14 @@ Do you need tool access?
   └── Yes
         ├── Simple, well-defined tasks → react
         ├── Tasks that benefit from self-critique → reflexion
-        ├── Tasks requiring exploration of options → lats / tot / got
+        ├── Tasks requiring exploration of options → lats / tot / got / retreval
         ├── Multi-hop factual questions → self-ask
         ├── Progressive decomposition → least-to-most / plan-and-solve
+        ├── Hierarchical goals with constraints → htp
+        ├── Tasks needing structured progress monitoring → map
+        ├── Tool-heavy tasks with precondition logic → knowagent
         ├── Novel / meta-cognitive tasks → self-discover
         └── Long-form reports / synthesis → storm
 ```
 
-Strategy docs: [react](01-react.md) · [reflexion](02-reflexion.md) · [lats](03-lats.md) · [cot](04-cot.md) · [zero-shot-cot](05-zero-shot-cot.md) · [step-back](06-step-back.md) · [reflection](07-reflection.md) · [self-ask](08-self-ask.md) · [least-to-most](09-least-to-most.md) · [plan-and-solve](10-plan-and-solve.md) · [tot](11-tree-of-thoughts.md) · [got](12-graph-of-thoughts.md) · [self-discover](13-self-discover.md) · [storm](14-storm.md)
+Strategy docs: [react](01-react.md) · [reflexion](02-reflexion.md) · [lats](03-lats.md) · [cot](04-cot.md) · [zero-shot-cot](05-zero-shot-cot.md) · [step-back](06-step-back.md) · [reflection](07-reflection.md) · [self-ask](08-self-ask.md) · [least-to-most](09-least-to-most.md) · [plan-and-solve](10-plan-and-solve.md) · [tot](11-tree-of-thoughts.md) · [got](12-graph-of-thoughts.md) · [self-discover](13-self-discover.md) · [storm](14-storm.md) · [retreval](15-retreval.md) · [map](16-map.md) · [htp](17-htp.md) · [knowagent](18-knowagent.md)

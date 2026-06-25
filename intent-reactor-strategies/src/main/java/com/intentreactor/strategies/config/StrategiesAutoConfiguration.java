@@ -12,11 +12,15 @@ import com.intentreactor.strategies.cot.ZeroShotCoTPlanner;
 import com.intentreactor.strategies.decomposition.LeastToMostPlanner;
 import com.intentreactor.strategies.decomposition.PlanAndSolvePlanner;
 import com.intentreactor.strategies.decomposition.SelfAskPlanner;
+import com.intentreactor.strategies.hierarchical.HTPPlanner;
+import com.intentreactor.strategies.knowledge.KnowAgentPlanner;
 import com.intentreactor.strategies.meta.SelfDiscoverPlanner;
 import com.intentreactor.strategies.meta.StormPlanner;
+import com.intentreactor.strategies.modular.MAPPlanner;
 import com.intentreactor.strategies.refinement.ReflectionPlanner;
 import com.intentreactor.strategies.refinement.StepBackPlanner;
 import com.intentreactor.strategies.search.GraphOfThoughtsPlanner;
+import com.intentreactor.strategies.search.ReTreValPlanner;
 import com.intentreactor.strategies.search.TreeOfThoughtsPlanner;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -153,5 +157,45 @@ public class StrategiesAutoConfiguration {
                                 ObjectMapper objectMapper, StrategiesProperties strategiesProperties) {
         ChatClient chatClient = chatClientBuilder.build();
         return new StormPlanner(chatClient, toolProvider, objectMapper, strategiesProperties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(Planner.class)
+    @ConditionalOnProperty(prefix = "intent-reactor.planning", name = "strategy", havingValue = "retreval")
+    public Planner retrevalPlanner(ChatClient.Builder chatClientBuilder, ToolProvider toolProvider,
+                                   ObjectMapper objectMapper, StrategiesProperties strategiesProperties) {
+        ChatClient chatClient = chatClientBuilder.build();
+        return new ReTreValPlanner(chatClient, toolProvider, objectMapper, strategiesProperties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(Planner.class)
+    @ConditionalOnProperty(prefix = "intent-reactor.planning", name = "strategy", havingValue = "map")
+    public Planner mapPlanner(ChatClient.Builder chatClientBuilder, ToolProvider toolProvider,
+                              ObjectMapper objectMapper, StrategiesProperties strategiesProperties) {
+        ChatClient chatClient = chatClientBuilder.build();
+        return new MAPPlanner(chatClient, toolProvider, objectMapper, strategiesProperties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(Planner.class)
+    @ConditionalOnProperty(prefix = "intent-reactor.planning", name = "strategy", havingValue = "htp")
+    public Planner htpPlanner(ChatClient.Builder chatClientBuilder, ToolProvider toolProvider,
+                              ObjectMapper objectMapper, StrategiesProperties strategiesProperties) {
+        ChatClient chatClient = chatClientBuilder.build();
+        return new HTPPlanner(chatClient, toolProvider, objectMapper, strategiesProperties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(Planner.class)
+    @ConditionalOnProperty(prefix = "intent-reactor.planning", name = "strategy", havingValue = "knowagent")
+    public Planner knowAgentPlanner(ChatClient.Builder chatClientBuilder, ToolProvider toolProvider,
+                                    IntentReactorProperties props, ObjectMapper objectMapper,
+                                    StrategiesProperties strategiesProperties,
+                                    @Autowired(required = false) List<PromptContextProvider> promptContextProviders) {
+        ChatClient chatClient = chatClientBuilder.build();
+        List<PromptContextProvider> providers = promptContextProviders != null ? promptContextProviders : List.of();
+        Planner delegate = new DefaultReACTPlanner(chatClient, toolProvider, props, objectMapper, providers);
+        return new KnowAgentPlanner(delegate, chatClient, toolProvider, objectMapper, strategiesProperties);
     }
 }

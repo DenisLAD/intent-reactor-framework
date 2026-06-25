@@ -14,8 +14,8 @@
         <module name="intent-reactor-rag" />
         <module name="intent-reactor-session-jdbc" />
         <module name="intent-reactor-spring-boot-starter" />
-        <module name="intent-reactor-mcp-client" />
         <module name="intent-reactor-tool-dynamic" />
+        <module name="intent-reactor-mcp-client" />
         <module name="intent-reactor-core" />
         <module name="intent-reactor-strategies" />
         <module name="intent-reactor-mcp-server" />
