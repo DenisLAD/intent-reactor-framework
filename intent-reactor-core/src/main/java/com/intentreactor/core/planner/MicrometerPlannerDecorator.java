@@ -7,6 +7,11 @@ import com.intentreactor.api.SessionState;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
+/**
+ * Wraps any {@link Planner} with Micrometer instrumentation: records planning duration
+ * ({@code intent_reactor.plan.duration}) and counts steps by type
+ * ({@code intent_reactor.plan.steps}). Auto-activated when a {@code MeterRegistry} bean is present.
+ */
 public class MicrometerPlannerDecorator implements Planner {
 
     private final Planner delegate;

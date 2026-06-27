@@ -21,6 +21,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * LLM-based implementation of {@link com.intentreactor.api.IntentPreprocessor}.
+ * Sends the user message and recent history to an LLM with a structured prompt
+ * to extract intents and named entities.
+ */
 public class DefaultIntentPreprocessor implements IntentPreprocessor {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultIntentPreprocessor.class);

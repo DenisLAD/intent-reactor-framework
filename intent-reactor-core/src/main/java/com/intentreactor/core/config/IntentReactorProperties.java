@@ -6,6 +6,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
 
+/**
+ * Configuration properties bound to the {@code intent-reactor} prefix.
+ * Full reference in CLAUDE.md under "Configuration Reference".
+ */
 @Getter
 @Setter
 @ConfigurationProperties(prefix = "intent-reactor")

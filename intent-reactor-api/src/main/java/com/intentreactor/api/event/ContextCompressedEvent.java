@@ -11,6 +11,14 @@ public class ContextCompressedEvent extends IntentReactorEvent {
     private final int compressedMessageCount;
     private final int summaryLength;
 
+    /**
+     * Creates the event.
+     *
+     * @param source                 the publishing component
+     * @param sessionId              the session identifier
+     * @param compressedMessageCount the number of old messages replaced by the summary
+     * @param summaryLength          the character length of the generated summary
+     */
     public ContextCompressedEvent(Object source, String sessionId,
                                   int compressedMessageCount, int summaryLength) {
         super(source, sessionId);
@@ -18,12 +26,16 @@ public class ContextCompressedEvent extends IntentReactorEvent {
         this.summaryLength = summaryLength;
     }
 
-    /** Number of old messages that were replaced by the summary. */
+    /**
+     * Number of old messages that were replaced by the summary.
+     */
     public int getCompressedMessageCount() {
         return compressedMessageCount;
     }
 
-    /** Character length of the generated summary. */
+    /**
+     * Character length of the generated summary.
+     */
     public int getSummaryLength() {
         return summaryLength;
     }

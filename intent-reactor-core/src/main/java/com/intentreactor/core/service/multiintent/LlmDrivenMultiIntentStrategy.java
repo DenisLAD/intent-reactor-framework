@@ -22,6 +22,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * {@link com.intentreactor.api.MultiIntentStrategy} that asks the LLM to order detected intents
+ * by dependency before delegating sequential execution, enabling dependency-aware scheduling.
+ */
 public class LlmDrivenMultiIntentStrategy implements MultiIntentStrategy {
 
     private static final Logger log = LoggerFactory.getLogger(LlmDrivenMultiIntentStrategy.class);

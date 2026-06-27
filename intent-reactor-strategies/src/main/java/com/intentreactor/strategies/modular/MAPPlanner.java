@@ -2,17 +2,14 @@ package com.intentreactor.strategies.modular;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.intentreactor.api.Action;
 import com.intentreactor.api.IntentAnalysisResult;
 import com.intentreactor.api.Message;
 import com.intentreactor.api.Plan;
 import com.intentreactor.api.Planner;
 import com.intentreactor.api.SessionState;
-import com.intentreactor.api.SimpleAction;
-import com.intentreactor.api.SimplePlan;
-import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
+import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,287 +19,166 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * MAP (Modular Agentic Planner): 5 specialized LLM cognitive modules.
- * <p>
- * 1. TaskDecomposer — once: decomposes goal into subtasks
- * 2. StatePredictor — optional: predicts outcome of action (if useStatePredictor=true)
- * 3. Evaluator      — every evalIntervalSteps: scores progress 0-1
- * 4. ConflictMonitor — on tool errors: detects contradictions
- * 5. TaskCoordinator — every step: decides next action
- * <p>
- * Session attributes: map_phase, map_subtasks, map_subtask_index, map_eval_score,
- * map_eval_step_count, map_conflict_context
- * <p>
- * Activate with: intent-reactor.planning.strategy: map
+ * MAP (Modular Agentic Planner): iteratively refines a subgoal decomposition through four LLM
+ * modules — TaskDecomposer, Evaluator, ConflictMonitor, and optional StatePredictor — then
+ * injects the approved plan as a pinned message and delegates step execution to a base ReACT planner.
  */
 public class MAPPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(MAPPlanner.class);
 
     private static final String PHASE_KEY = "map_phase";
-    private static final String SUBTASKS_KEY = "map_subtasks";
-    private static final String SUBTASK_INDEX_KEY = "map_subtask_index";
-    private static final String EVAL_SCORE_KEY = "map_eval_score";
-    private static final String EVAL_STEP_COUNT_KEY = "map_eval_step_count";
-    private static final String CONFLICT_CONTEXT_KEY = "map_conflict_context";
-
-    // ── TaskDecomposer ──────────────────────────────────────────────────────────
-    private static final String DECOMPOSE_SYSTEM =
-            "Ты — модуль декомпозиции задач (TaskDecomposer). Разбей цель на упорядоченные " +
-                    "атомарные подзадачи. Каждая подзадача — один конкретный шаг.\n\n" +
-                    "Доступные инструменты:\n{tools}\n\n" +
-                    "Верни JSON-массив строк (не более {maxSubtasks}):\n[\"подзадача 1\", \"подзадача 2\", ...]";
-
-    // ── Evaluator ────────────────────────────────────────────────────────────────
-    private static final String EVALUATOR_SYSTEM =
-            "Ты — модуль оценки прогресса (Evaluator). Оцени, насколько достигнута цель.\n\n" +
-                    "Верни JSON:\n{\"score\": 0.0-1.0, \"assessment\": \"...\", \"next_focus\": \"...\"}";
-
-    // ── ConflictMonitor ─────────────────────────────────────────────────────────
-    private static final String CONFLICT_SYSTEM =
-            "Ты — модуль обнаружения конфликтов (ConflictMonitor). Проанализируй историю " +
-                    "выполнения на предмет противоречий, циклических зависимостей или ошибок.\n\n" +
-                    "Верни JSON:\n{\"conflict_detected\": true/false, \"description\": \"...\", \"resolution\": \"...\"}";
-
-    // ── TaskCoordinator ─────────────────────────────────────────────────────────
-    private static final String COORDINATOR_SYSTEM =
-            "Ты — главный координатор задач (TaskCoordinator). Реши, какое следующее действие " +
-                    "нужно для выполнения текущей подзадачи.\n\n" +
-                    "Доступные инструменты:\n{tools}\n\n" +
-                    "Текущая подзадача ({subtaskIndex}/{totalSubtasks}): {currentSubtask}\n" +
-                    "{conflictContext}" +
-                    "Верни JSON:\n" +
-                    "{\"action\": \"use_tool\"|\"complete_subtask\"|\"done\", " +
-                    "\"toolName\": \"...\", \"parameters\": {}, \"rationale\": \"...\"}";
-
-    // ── StatePredictor ──────────────────────────────────────────────────────────
-    private static final String STATE_PREDICTOR_SYSTEM =
-            "Ты — модуль предсказания состояния (StatePredictor). " +
-                    "Предскажи результат выполнения следующей подзадачи.\n\n" +
-                    "Верни JSON:\n{\"prediction\": \"...\", \"confidence\": 0.0-1.0}";
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
     private final ObjectMapper objectMapper;
+    private final Planner delegate;
+    private final PromptLoader promptLoader;
+
     private final int maxSubtasks;
-    private final double progressThreshold;
+    private final int maxPlanningIterations;
+    private final double confidenceThreshold;
     private final boolean useConflictMonitor;
     private final boolean useStatePredictor;
-    private final int evalIntervalSteps;
 
-    public MAPPlanner(ChatClient chatClient, ToolProvider toolProvider,
-                      ObjectMapper objectMapper, StrategiesProperties props) {
+    private final String decomposePrompt;
+    private final String evaluatePrompt;
+    private final String conflictPrompt;
+    private final String predictPrompt;
+    private final String executeSystemPrompt;
+
+    private final StrategiesProperties.LabelsConfig labels;
+
+    public MAPPlanner(ChatClient chatClient, ToolProvider toolProvider, ObjectMapper objectMapper,
+                      StrategiesProperties props, Planner delegate, PromptLoader promptLoader) {
         this.chatClient = chatClient;
         this.toolProvider = toolProvider;
         this.objectMapper = objectMapper;
+        this.delegate = delegate;
+        this.promptLoader = promptLoader;
+
         StrategiesProperties.MapConfig cfg = props.getMap();
         this.maxSubtasks = cfg.getMaxSubtasks();
-        this.progressThreshold = cfg.getProgressThreshold();
+        this.maxPlanningIterations = cfg.getMaxPlanningIterations();
+        this.confidenceThreshold = cfg.getConfidenceThreshold();
         this.useConflictMonitor = cfg.isUseConflictMonitor();
         this.useStatePredictor = cfg.isUseStatePredictor();
-        this.evalIntervalSteps = cfg.getEvalIntervalSteps();
+
+        this.decomposePrompt = props.getPrompts().getMapDecompose();
+        this.evaluatePrompt = props.getPrompts().getMapEvaluate();
+        this.conflictPrompt = props.getPrompts().getMapConflict();
+        this.predictPrompt = props.getPrompts().getMapPredict();
+        this.executeSystemPrompt = props.getPrompts().getMapExecuteSystem();
+
+        this.labels = props.getLabels();
     }
 
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
-        String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "DECOMPOSE");
+        String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "PLAN");
         String goal = getGoal(session, intent);
-
-        return switch (phase) {
-            case "DECOMPOSE" -> decompose(session, goal);
-            case "EXECUTE" -> execute(session, goal);
-            default -> decompose(session, goal);
-        };
+        return "PLAN".equals(phase)
+                ? runPlanningPhase(session, intent, goal)
+                : delegate.plan(session, intent);
     }
 
-    // ── Phase: DECOMPOSE ─────────────────────────────────────────────────────────
+    // ── Planning phase ──────────────────────────────────────────────────────────
 
-    @SuppressWarnings("unchecked")
-    private Plan decompose(SessionState session, String goal) {
+    private Plan runPlanningPhase(SessionState session, IntentAnalysisResult intent, String goal) {
         List<Tool> tools = toolProvider.getAvailableTools(session);
-        String toolsList = formatTools(tools);
+        List<Subgoal> best = decompose(goal, tools, null);
 
-        String systemPrompt = DECOMPOSE_SYSTEM
-                .replace("{tools}", toolsList)
-                .replace("{maxSubtasks}", String.valueOf(maxSubtasks));
+        for (int i = 1; i < maxPlanningIterations; i++) {
+            if (useStatePredictor) {
+                for (Subgoal sg : best) {
+                    predictState(session, goal, sg);
+                }
+            }
+            double score = evaluate(session, goal, best);
+            String conflictCtx = useConflictMonitor ? checkConflicts(session, goal, best) : null;
 
+            log.debug("[MAP] Planning iteration {}: score={}, conflicts={}",
+                    i, score, conflictCtx != null ? "detected" : "none");
+
+            if (score >= confidenceThreshold && conflictCtx == null) {
+                log.debug("[MAP] Plan accepted at iteration {}", i);
+                break;
+            }
+            List<Subgoal> refined = decompose(goal, tools, conflictCtx);
+            if (!refined.isEmpty()) best = refined;
+        }
+
+        log.debug("[MAP] Injecting plan with {} subgoals into session {}", best.size(), session.getId());
+        injectPlan(session, goal, best);
+        session.getAttributes().put(PHASE_KEY, "EXECUTE");
+        return delegate.plan(session, intent);
+    }
+
+    // ── TaskDecomposer ──────────────────────────────────────────────────────────
+
+    private List<Subgoal> decompose(String goal, List<Tool> tools, String conflictCtx) {
+        String conflictBlock = conflictCtx != null
+                ? labels.getMapResolveConflicts() + "\n" + conflictCtx + "\n\n"
+                : "";
+        String systemPrompt = promptLoader.load(decomposePrompt, Map.of(
+                "tools", formatTools(tools),
+                "maxSubtasks", String.valueOf(maxSubtasks),
+                "conflictContext", conflictBlock
+        ));
         try {
             String response = chatClient.prompt(new Prompt(List.of(
                     new SystemMessage(systemPrompt),
-                    new UserMessage("Цель: " + goal)
+                    new UserMessage(labels.getMapGoalPrefix() + " " + goal)
             ))).call().content();
-
-            List<String> subtasks = parseStringArray(response);
-            if (subtasks.size() > maxSubtasks) subtasks = subtasks.subList(0, maxSubtasks);
-            if (subtasks.isEmpty()) subtasks = List.of(goal);
-
-            session.getAttributes().put(SUBTASKS_KEY, subtasks);
-            session.getAttributes().put(SUBTASK_INDEX_KEY, 0);
-            session.getAttributes().put(EVAL_SCORE_KEY, 0.0);
-            session.getAttributes().put(EVAL_STEP_COUNT_KEY, 0);
-            session.getAttributes().put(PHASE_KEY, "EXECUTE");
-
-            log.debug("[MAP] Decomposed goal into {} subtasks for session {}", subtasks.size(), session.getId());
-
-            if (useStatePredictor && !subtasks.isEmpty()) {
-                runStatePredictor(session, subtasks.get(0), goal);
-            }
-
-            return execute(session, goal);
-
+            List<Subgoal> result = parseSubgoals(response);
+            if (result.size() > maxSubtasks) result = result.subList(0, maxSubtasks);
+            if (!result.isEmpty()) return result;
         } catch (Exception e) {
             log.warn("[MAP] Decomposition failed: {}", e.getMessage());
-            session.getAttributes().put(SUBTASKS_KEY, List.of(goal));
-            session.getAttributes().put(SUBTASK_INDEX_KEY, 0);
-            session.getAttributes().put(EVAL_SCORE_KEY, 0.0);
-            session.getAttributes().put(EVAL_STEP_COUNT_KEY, 0);
-            session.getAttributes().put(PHASE_KEY, "EXECUTE");
-            return execute(session, goal);
         }
+        return List.of(new Subgoal("1", goal, List.of()));
     }
 
-    // ── Phase: EXECUTE ───────────────────────────────────────────────────────────
+    // ── Evaluator ────────────────────────────────────────────────────────────────
 
-    @SuppressWarnings("unchecked")
-    private Plan execute(SessionState session, String goal) {
-        List<String> subtasks = (List<String>) session.getAttributes().getOrDefault(
-                SUBTASKS_KEY, List.of(goal));
-        int subtaskIndex = (int) session.getAttributes().getOrDefault(SUBTASK_INDEX_KEY, 0);
-        int evalStepCount = (int) session.getAttributes().getOrDefault(EVAL_STEP_COUNT_KEY, 0);
-        String conflictContext = (String) session.getAttributes().getOrDefault(CONFLICT_CONTEXT_KEY, null);
-
-        if (subtaskIndex >= subtasks.size()) {
-            return synthesizeDone(session, goal, subtasks);
-        }
-
-        // Run ConflictMonitor on tool error
-        if (useConflictMonitor && hasRecentToolError(session)) {
-            conflictContext = runConflictMonitor(session, goal);
-            session.getAttributes().put(CONFLICT_CONTEXT_KEY, conflictContext);
-        } else {
-            session.getAttributes().put(CONFLICT_CONTEXT_KEY, null);
-            conflictContext = null;
-        }
-
-        // Run Evaluator periodically
-        if (evalStepCount > 0 && evalStepCount % evalIntervalSteps == 0) {
-            double score = runEvaluator(session, goal, subtasks, subtaskIndex);
-            session.getAttributes().put(EVAL_SCORE_KEY, score);
-            if (score >= progressThreshold) {
-                log.debug("[MAP] Evaluator score {} >= threshold {}, completing", score, progressThreshold);
-                return synthesizeDone(session, goal, subtasks);
-            }
-        }
-
-        session.getAttributes().put(EVAL_STEP_COUNT_KEY, evalStepCount + 1);
-
-        // Run TaskCoordinator
-        List<Tool> tools = toolProvider.getAvailableTools(session);
-        String currentSubtask = subtasks.get(subtaskIndex);
-        String history = buildHistory(session);
-
-        String conflictBlock = conflictContext != null
-                ? "\n[КОНФЛИКТ ОБНАРУЖЕН]: " + conflictContext + "\n"
-                : "";
-
-        String systemPrompt = COORDINATOR_SYSTEM
-                .replace("{tools}", formatTools(tools))
-                .replace("{subtaskIndex}", String.valueOf(subtaskIndex + 1))
-                .replace("{totalSubtasks}", String.valueOf(subtasks.size()))
-                .replace("{currentSubtask}", currentSubtask)
-                .replace("{conflictContext}", conflictBlock);
-
+    private double evaluate(SessionState session, String goal, List<Subgoal> subgoals) {
+        String systemPrompt = promptLoader.load(evaluatePrompt);
         try {
+            String userMsg = labels.getMapGoalPrefix() + " " + goal
+                    + "\n\n" + labels.getMapProposedPlan() + "\n" + formatSubgoalsForPrompt(subgoals);
             String response = chatClient.prompt(new Prompt(List.of(
                     new SystemMessage(systemPrompt),
-                    new UserMessage("Цель: " + goal + "\n\nИстория:\n" + history)
-            ))).call().content();
-
-            Map<String, Object> result = parseJsonObject(response);
-            String action = (String) result.getOrDefault("action", "done");
-            String rationale = (String) result.getOrDefault("rationale", "");
-
-            if ("complete_subtask".equals(action)) {
-                log.debug("[MAP] Completing subtask {} of {}", subtaskIndex + 1, subtasks.size());
-                session.getAttributes().put(SUBTASK_INDEX_KEY, subtaskIndex + 1);
-                session.getAttributes().put(EVAL_STEP_COUNT_KEY, 0);
-
-                if (useStatePredictor && subtaskIndex + 1 < subtasks.size()) {
-                    runStatePredictor(session, subtasks.get(subtaskIndex + 1), goal);
-                }
-
-                if (subtaskIndex + 1 >= subtasks.size()) {
-                    return synthesizeDone(session, goal, subtasks);
-                }
-                // chain to next subtask
-                return execute(session, goal);
-            }
-
-            if ("done".equals(action)) {
-                return synthesizeDone(session, goal, subtasks);
-            }
-
-            if ("use_tool".equals(action)) {
-                String toolName = (String) result.get("toolName");
-                if (toolName != null && toolExists(tools, toolName)) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> params = result.get("parameters") instanceof Map
-                            ? (Map<String, Object>) result.get("parameters") : new HashMap<>();
-                    Action toolAction = new SimpleAction(toolName, params);
-                    return new SimplePlan(List.of(
-                            SimplePlanStep.act(toolAction, "MAP: " + rationale, false)));
-                }
-            }
-
-            return new SimplePlan(List.of(SimplePlanStep.reason("MAP Coordinator: " + rationale)));
-
-        } catch (Exception e) {
-            log.warn("[MAP] Coordinator call failed: {}", e.getMessage());
-            return new SimplePlan(List.of(SimplePlanStep.reason("Переход к следующему шагу")));
-        }
-    }
-
-    // ── Modules ──────────────────────────────────────────────────────────────────
-
-    private double runEvaluator(SessionState session, String goal, List<String> subtasks, int index) {
-        try {
-            String history = buildHistory(session);
-            String userMsg = "Цель: " + goal + "\nВсе подзадачи: " + subtasks +
-                    "\nТекущая подзадача № " + (index + 1) + "\n\nИстория:\n" + history;
-            String response = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(EVALUATOR_SYSTEM),
                     new UserMessage(userMsg)
             ))).call().content();
-
             Map<String, Object> result = parseJsonObject(response);
-            double score = ((Number) result.getOrDefault("score", 0.5)).doubleValue();
-            log.debug("[MAP] Evaluator score: {} for session {}", score, session.getId());
-            return score;
+            return ((Number) result.getOrDefault("score", 0.5)).doubleValue();
         } catch (Exception e) {
             log.warn("[MAP] Evaluator failed: {}", e.getMessage());
-            return 0.0;
+            return 0.5;
         }
     }
 
-    private String runConflictMonitor(SessionState session, String goal) {
-        try {
-            String history = buildHistory(session);
-            String response = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(CONFLICT_SYSTEM),
-                    new UserMessage("Цель: " + goal + "\n\nИстория:\n" + history)
-            ))).call().content();
+    // ── ConflictMonitor ─────────────────────────────────────────────────────────
 
+    private String checkConflicts(SessionState session, String goal, List<Subgoal> subgoals) {
+        String systemPrompt = promptLoader.load(conflictPrompt);
+        try {
+            String userMsg = labels.getMapGoalPrefix() + " " + goal
+                    + "\n\n" + labels.getMapSubgoalsHeader() + "\n" + formatSubgoalsForPrompt(subgoals);
+            String response = chatClient.prompt(new Prompt(List.of(
+                    new SystemMessage(systemPrompt),
+                    new UserMessage(userMsg)
+            ))).call().content();
             Map<String, Object> result = parseJsonObject(response);
             if (Boolean.TRUE.equals(result.get("conflict_detected"))) {
                 String description = (String) result.getOrDefault("description", "");
                 String resolution = (String) result.getOrDefault("resolution", "");
                 log.debug("[MAP] Conflict detected for session {}: {}", session.getId(), description);
-                return description + ". Разрешение: " + resolution;
+                return description + (resolution.isBlank() ? "" : ". " + resolution);
             }
         } catch (Exception e) {
             log.warn("[MAP] ConflictMonitor failed: {}", e.getMessage());
@@ -310,83 +186,116 @@ public class MAPPlanner implements Planner {
         return null;
     }
 
-    private void runStatePredictor(SessionState session, String nextSubtask, String goal) {
-        try {
-            String response = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(STATE_PREDICTOR_SYSTEM),
-                    new UserMessage("Цель: " + goal + "\nСледующая подзадача: " + nextSubtask)
-            ))).call().content();
+    // ── StatePredictor ──────────────────────────────────────────────────────────
 
+    private void predictState(SessionState session, String goal, Subgoal subgoal) {
+        String systemPrompt = promptLoader.load(predictPrompt);
+        try {
+            String userMsg = labels.getMapGoalPrefix() + " " + goal
+                    + "\n" + labels.getMapSubgoalLabel() + " " + subgoal.description();
+            String response = chatClient.prompt(new Prompt(List.of(
+                    new SystemMessage(systemPrompt),
+                    new UserMessage(userMsg)
+            ))).call().content();
             Map<String, Object> result = parseJsonObject(response);
             String prediction = (String) result.getOrDefault("prediction", "");
             if (!prediction.isBlank()) {
-                session.addMessage(Message.system("[MAP:StatePredictor] Прогноз: " + prediction));
+                session.addMessage(Message.system(labels.getMapStatePredictionTag() + subgoal.id() + ": " + prediction));
             }
         } catch (Exception e) {
             log.warn("[MAP] StatePredictor failed: {}", e.getMessage());
         }
     }
 
-    // ── Synthesize ───────────────────────────────────────────────────────────────
+    // ── Plan injection ──────────────────────────────────────────────────────────
 
-    @SuppressWarnings("unchecked")
-    private Plan synthesizeDone(SessionState session, String goal, List<String> subtasks) {
-        String history = buildHistory(session);
-        String summary = "Цель: " + goal + "\nВыполненные подзадачи: " + subtasks +
-                "\n\nИстория выполнения:\n" + history;
-        return new SimplePlan(List.of(SimplePlanStep.done(summary)));
-    }
-
-    // ── Helpers ──────────────────────────────────────────────────────────────────
-
-    private boolean hasRecentToolError(SessionState session) {
-        List<Message> messages = session.getMessages();
-        int start = Math.max(0, messages.size() - 3);
-        for (int i = start; i < messages.size(); i++) {
-            Message msg = messages.get(i);
-            if (msg.getContent() != null && msg.getContent().contains("[TOOL_ERROR]")) return true;
+    private void injectPlan(SessionState session, String goal, List<Subgoal> subgoals) {
+        String subgoalsList = formatSubgoalsForInjection(subgoals);
+        String planText = promptLoader.load(executeSystemPrompt, Map.of(
+                "goal", goal,
+                "subgoals", subgoalsList
+        ));
+        if (planText.isBlank()) {
+            planText = labels.getMapPlanHeader() + " " + goal + "\n\n" + subgoalsList;
         }
-        return false;
+        session.addMessage(Message.pinnedUser(planText));
     }
 
-    private boolean toolExists(List<Tool> tools, String toolName) {
-        return tools.stream().anyMatch(t -> t.getName().equals(toolName));
-    }
-
-    private String buildHistory(SessionState session) {
-        List<Message> messages = session.getMessages();
-        int start = Math.max(0, messages.size() - 10);
-        StringBuilder sb = new StringBuilder();
-        for (int i = start; i < messages.size(); i++) {
-            Message msg = messages.get(i);
-            sb.append(msg.getRole().name()).append(": ").append(truncate(msg.getContent(), 300)).append("\n");
-        }
-        return sb.toString();
-    }
+    // ── Formatting helpers ──────────────────────────────────────────────────────
 
     private String formatTools(List<Tool> tools) {
         StringBuilder sb = new StringBuilder();
         for (Tool tool : tools) {
             sb.append("- ").append(tool.getName()).append(": ").append(tool.getDescription()).append("\n");
+            Map<String, Object> schema = tool.getParameterSchema();
+            if (schema != null) {
+                Object props = schema.get("properties");
+                Object required = schema.get("required");
+                if (props instanceof Map<?, ?> propsMap && !propsMap.isEmpty()) {
+                    try {
+                        sb.append(labels.getMapToolParameters()).append(objectMapper.writeValueAsString(propsMap));
+                    } catch (Exception e) {
+                        sb.append(labels.getMapToolParameters()).append(propsMap);
+                    }
+                    if (required instanceof List<?> req && !req.isEmpty()) {
+                        sb.append(labels.getMapToolRequired()).append(req).append(")");
+                    }
+                    sb.append("\n");
+                }
+            }
         }
         return sb.toString();
     }
 
-    private String truncate(String s, int max) {
-        if (s == null) return "";
-        return s.length() > max ? s.substring(0, max) + "..." : s;
+    private String formatSubgoalsForPrompt(List<Subgoal> subgoals) {
+        StringBuilder sb = new StringBuilder();
+        for (Subgoal sg : subgoals) {
+            sb.append(sg.id()).append(". ").append(sg.description());
+            if (!sg.dependsOn().isEmpty()) {
+                sb.append(labels.getMapDependsOn()).append(String.join(", ", sg.dependsOn())).append("]");
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
     }
 
+    private String formatSubgoalsForInjection(List<Subgoal> subgoals) {
+        StringBuilder sb = new StringBuilder();
+        for (Subgoal sg : subgoals) {
+            sb.append(sg.id()).append(". ").append(sg.description());
+            if (sg.dependsOn().isEmpty()) {
+                sb.append(labels.getMapIndependent());
+            } else {
+                sb.append(labels.getMapDependsOn()).append(String.join(", ", sg.dependsOn())).append("]");
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    // ── Parsers ─────────────────────────────────────────────────────────────────
+
     @SuppressWarnings("unchecked")
-    private List<String> parseStringArray(String response) {
+    private List<Subgoal> parseSubgoals(String response) {
         try {
             String cleaned = stripMarkdownFences(response.strip());
             int start = cleaned.indexOf('[');
             int end = cleaned.lastIndexOf(']');
             if (start >= 0 && end > start) cleaned = cleaned.substring(start, end + 1);
-            return objectMapper.readValue(cleaned, new TypeReference<>() {
-            });
+            List<Map<String, Object>> raw = objectMapper.readValue(cleaned, new TypeReference<>() {});
+            List<Subgoal> result = new ArrayList<>();
+            for (Map<String, Object> item : raw) {
+                String id = String.valueOf(item.getOrDefault("id", String.valueOf(result.size() + 1)));
+                String description = String.valueOf(item.getOrDefault("description", ""));
+                Object deps = item.get("depends_on");
+                List<String> dependsOn = deps instanceof List<?> list
+                        ? list.stream().map(Object::toString).toList()
+                        : List.of();
+                if (!description.isBlank()) result.add(new Subgoal(id, description, dependsOn));
+            }
+            return result;
         } catch (Exception e) {
+            log.warn("[MAP] Failed to parse subgoals: {}", e.getMessage());
             return new ArrayList<>();
         }
     }
@@ -398,10 +307,9 @@ public class MAPPlanner implements Planner {
             int start = cleaned.indexOf('{');
             int end = cleaned.lastIndexOf('}');
             if (start >= 0 && end > start) cleaned = cleaned.substring(start, end + 1);
-            return objectMapper.readValue(cleaned, new TypeReference<>() {
-            });
+            return objectMapper.readValue(cleaned, new TypeReference<>() {});
         } catch (Exception e) {
-            return new HashMap<>();
+            return Map.of();
         }
     }
 
@@ -429,4 +337,8 @@ public class MAPPlanner implements Planner {
         }
         return "unknown";
     }
+
+    // ── Inner model ─────────────────────────────────────────────────────────────
+
+    private record Subgoal(String id, String description, List<String> dependsOn) {}
 }

@@ -8,6 +8,10 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Stub weather tool that returns a fixed forecast for a given city.
+ * Implements {@link com.intentreactor.api.SimulatableTool} so LATS can branch without side effects.
+ */
 @Component
 public class WeatherTool implements SimulatableTool {
 

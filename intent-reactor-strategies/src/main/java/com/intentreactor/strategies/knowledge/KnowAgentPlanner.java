@@ -9,6 +9,7 @@ import com.intentreactor.api.Planner;
 import com.intentreactor.api.SessionState;
 import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
+import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +31,8 @@ import java.util.regex.Pattern;
  * from tool metadata, filters invalid tools based on current session state, and injects KB context
  * as a system message before delegating to the base ReACT planner.
  * <p>
+ * Prompt file configured via intent-reactor.planning.strategies.prompts.knowagent-enrich
+ * <p>
  * Activate with: intent-reactor.planning.strategy: knowagent
  */
 public class KnowAgentPlanner implements Planner {
@@ -38,15 +41,6 @@ public class KnowAgentPlanner implements Planner {
 
     private static final String KB_KEY = "knowagent_kb";
     private static final String INITIALIZED_KEY = "knowagent_initialized";
-
-    private static final String ENRICH_SYSTEM =
-            "Ты эксперт по API. Для каждого инструмента в списке определи: " +
-                    "предусловия (что должно быть сделано ДО вызова), " +
-                    "постусловия (что инструмент гарантирует ПОСЛЕ успешного выполнения), " +
-                    "противопоказания (когда инструмент НЕ СТОИТ вызывать).\n\n" +
-                    "Верни JSON-объект:\n" +
-                    "{\"toolName\": {\"preconditions\": [...], \"postconditions\": [...], \"contraindications\": [...]}}\n\n" +
-                    "Если у инструмента нет ограничений — используй пустые массивы.";
 
     private static final Pattern PRECONDITION_PATTERN =
             Pattern.compile("(?i)(requires?|needs?|must first|after calling|before|depends on)");
@@ -61,6 +55,9 @@ public class KnowAgentPlanner implements Planner {
     private final ObjectMapper objectMapper;
     private final boolean enrichKnowledge;
     private final boolean filterByPreconditions;
+    private final PromptLoader promptLoader = new PromptLoader();
+    private final String enrichPromptPath;
+    private final StrategiesProperties.LabelsConfig labels;
 
     public KnowAgentPlanner(Planner delegate, ChatClient chatClient, ToolProvider toolProvider,
                             ObjectMapper objectMapper, StrategiesProperties props) {
@@ -70,6 +67,8 @@ public class KnowAgentPlanner implements Planner {
         this.objectMapper = objectMapper;
         this.enrichKnowledge = props.getKnowAgent().isEnrichKnowledge();
         this.filterByPreconditions = props.getKnowAgent().isFilterByPreconditions();
+        this.enrichPromptPath = props.getPrompts().getKnowagentEnrich();
+        this.labels = props.getLabels();
     }
 
     @Override
@@ -91,10 +90,11 @@ public class KnowAgentPlanner implements Planner {
 
         if (enrichKnowledge && !tools.isEmpty()) {
             try {
+                String enrichSystem = promptLoader.load(enrichPromptPath, Map.of());
                 String toolList = buildToolListForEnrichment(tools);
                 String response = chatClient.prompt(new Prompt(List.of(
-                        new SystemMessage(ENRICH_SYSTEM),
-                        new UserMessage("Инструменты:\n" + toolList)
+                        new SystemMessage(enrichSystem),
+                        new UserMessage(labels.getEnrichUserPrefix() + toolList)
                 ))).call().content();
                 mergeEnrichedKnowledge(kb, response);
                 log.debug("[KnowAgent] LLM-enriched KB for session {}", session.getId());
@@ -192,26 +192,26 @@ public class KnowAgentPlanner implements Planner {
                     String missing = knowledge.getPreconditions().stream()
                             .filter(pre -> !isMet(pre, satisfiedPostconditions, session))
                             .findFirst().orElse("unknown precondition");
-                    blocked.add(knowledge.getToolName() + " [ЗАБЛОКИРОВАНО: " + missing + "]");
+                    blocked.add(knowledge.getToolName() + labels.getKbBlocked() + missing + "]");
                 }
             }
 
             if (!valid.isEmpty()) {
-                sb.append("Доступные инструменты (предусловия выполнены): ").append(String.join(", ", valid)).append("\n");
+                sb.append(labels.getKbAvailable()).append(String.join(", ", valid)).append("\n");
             }
             if (!blocked.isEmpty()) {
-                sb.append("Недоступные инструменты: ").append(String.join("; ", blocked)).append("\n");
+                sb.append(labels.getKbUnavailable()).append(String.join("; ", blocked)).append("\n");
             }
         }
 
         List<String> warnings = new ArrayList<>();
         for (ToolKnowledge knowledge : kb.values()) {
             for (String contra : knowledge.getContraindications()) {
-                warnings.add(knowledge.getToolName() + ": ПРЕДУПРЕЖДЕНИЕ — " + contra);
+                warnings.add(knowledge.getToolName() + ": " + labels.getKbWarning() + contra);
             }
         }
         if (!warnings.isEmpty()) {
-            sb.append("Противопоказания:\n");
+            sb.append(labels.getKbContraindications());
             warnings.forEach(w -> sb.append("  - ").append(w).append("\n"));
         }
 
@@ -224,11 +224,9 @@ public class KnowAgentPlanner implements Planner {
         for (Message msg : session.getMessages()) {
             if (msg.getRole() == Message.Role.SYSTEM && msg.getContent() != null
                     && msg.getContent().startsWith("[TOOL_RESULT]")) {
-                // find which tool produced this result
                 for (ToolKnowledge knowledge : kb.values()) {
                     if (msg.getContent().contains(knowledge.getToolName())) {
                         satisfied.addAll(knowledge.getPostconditions());
-                        // also treat tool name itself as a postcondition marker
                         satisfied.add(knowledge.getToolName());
                         break;
                     }
@@ -240,17 +238,14 @@ public class KnowAgentPlanner implements Planner {
 
     private boolean isMet(String precondition, Set<String> satisfied, SessionState session) {
         if (precondition == null || precondition.isBlank()) return true;
-        // check if any satisfied postcondition or tool name is mentioned in precondition
         for (String s : satisfied) {
             if (precondition.toLowerCase().contains(s.toLowerCase())) return true;
         }
-        // also check session messages directly for tool name mentions
         String lowerPre = precondition.toLowerCase();
         for (Message msg : session.getMessages()) {
             if (msg.getRole() == Message.Role.SYSTEM && msg.getContent() != null
                     && msg.getContent().startsWith("[TOOL_RESULT]")) {
                 String content = msg.getContent().toLowerCase();
-                // extract words from precondition and check if they appear in a TOOL_RESULT
                 String[] words = lowerPre.split("\\s+");
                 for (String word : words) {
                     if (word.length() > 4 && content.contains(word)) return true;

@@ -83,28 +83,28 @@ class ChainOfThoughtPlannerTest {
 
     @Test
     void zeroShotCoT_injectsReasoningTrigger() {
-        Planner planner = new ZeroShotCoTPlanner(delegate);
+        Planner planner = new ZeroShotCoTPlanner(delegate, props);
         planner.plan(session, intent);
 
         assertThat(session.getMessages()).hasSize(1);
-        assertThat(session.getMessages().get(0).getContent()).contains("по шагам");
+        assertThat(session.getMessages().get(0).getContent()).contains("ZERO-SHOT COT");
     }
 
     @Test
     void zeroShotCoT_injectsOnlyOnce() {
-        Planner planner = new ZeroShotCoTPlanner(delegate);
+        Planner planner = new ZeroShotCoTPlanner(delegate, props);
         planner.plan(session, intent);
         planner.plan(session, intent);
 
         long injected = session.getMessages().stream()
-                .filter(m -> m.getContent().contains("по шагам"))
+                .filter(m -> m.getContent().contains("ZERO-SHOT COT"))
                 .count();
         assertThat(injected).isEqualTo(1);
     }
 
     @Test
     void zeroShotCoT_delegatesToBase() {
-        Planner planner = new ZeroShotCoTPlanner(delegate);
+        Planner planner = new ZeroShotCoTPlanner(delegate, props);
         Plan result = planner.plan(session, intent);
 
         verify(delegate, times(1)).plan(session, intent);

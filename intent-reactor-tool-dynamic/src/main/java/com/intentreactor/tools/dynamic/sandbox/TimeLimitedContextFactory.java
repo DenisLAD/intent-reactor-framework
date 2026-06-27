@@ -5,6 +5,11 @@ import org.mozilla.javascript.ContextFactory;
 
 import java.time.Duration;
 
+/**
+ * Rhino {@link ContextFactory} that enforces a wall-clock timeout on script execution.
+ * Runs in interpreted mode ({@code optimizationLevel=-1}) so that {@code observeInstructionCount}
+ * is called periodically; throws {@link ScriptTimeoutException} when the elapsed time exceeds the limit.
+ */
 public class TimeLimitedContextFactory extends ContextFactory {
 
     private static final int INSTRUCTION_OBSERVER_THRESHOLD = 10_000;

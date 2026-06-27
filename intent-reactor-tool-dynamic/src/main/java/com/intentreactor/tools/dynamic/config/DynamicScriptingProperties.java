@@ -6,6 +6,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Configuration properties for the dynamic scripting subsystem,
+ * bound to the {@code intent-reactor.tools.dynamic-scripting} prefix.
+ */
 @ConfigurationProperties(prefix = "intent-reactor.tools.dynamic-scripting")
 public class DynamicScriptingProperties {
 

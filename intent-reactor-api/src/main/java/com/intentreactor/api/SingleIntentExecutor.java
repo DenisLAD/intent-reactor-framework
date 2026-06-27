@@ -10,5 +10,12 @@ package com.intentreactor.api;
 @FunctionalInterface
 public interface SingleIntentExecutor {
 
+    /**
+     * Runs the single-intent execution loop for the given session.
+     *
+     * @param session    the session to process; must not be {@code null}
+     * @param persistent {@code true} if the session should be saved to the store after execution
+     * @return the planning result for this intent; never {@code null}
+     */
     ReactorResponse execute(SessionState session, boolean persistent);
 }

@@ -9,6 +9,10 @@ import com.intentreactor.core.config.IntentReactorProperties;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Default {@link com.intentreactor.api.ConfirmationManager} that builds confirmation requests for
+ * risky plan steps and enforces the timeout configured in {@link IntentReactorProperties}.
+ */
 public class DefaultConfirmationManager implements ConfirmationManager {
 
     private final IntentReactorProperties properties;

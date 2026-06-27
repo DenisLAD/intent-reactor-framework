@@ -13,6 +13,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+/**
+ * Recursively scans a directory for {@code .md} files and returns their relative paths.
+ */
 @Component
 public class MarkdownFileScannerTool implements Tool {
 

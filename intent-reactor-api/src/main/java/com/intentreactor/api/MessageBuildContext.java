@@ -20,6 +20,12 @@ public final class MessageBuildContext {
     private final SessionState session;
     private final Map<Message, Integer> charLimitOverrides = new IdentityHashMap<>();
 
+    /**
+     * Creates a new build context.
+     *
+     * @param evictedMessages messages that the sliding window pushed out; {@code null} is treated as empty
+     * @param session         the owning session
+     */
     public MessageBuildContext(List<Message> evictedMessages, SessionState session) {
         this.evictedMessages = evictedMessages != null
                 ? Collections.unmodifiableList(evictedMessages)
@@ -35,6 +41,9 @@ public final class MessageBuildContext {
         return evictedMessages;
     }
 
+    /**
+     * Returns the owning session state.
+     */
     public SessionState getSession() {
         return session;
     }

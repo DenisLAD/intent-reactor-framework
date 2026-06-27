@@ -5,6 +5,10 @@ import lombok.Data;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Single action step within an {@link HyperNode} mini-plan produced by {@link HTPPlanner}:
+ * specifies the tool to call, its parameters, a human-readable description, and the observation result.
+ */
 @Data
 public class HtpStep {
 

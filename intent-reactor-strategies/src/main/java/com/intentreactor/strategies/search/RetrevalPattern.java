@@ -2,6 +2,10 @@ package com.intentreactor.strategies.search;
 
 import lombok.Data;
 
+/**
+ * Captured reasoning pattern accumulated by {@link ReTreValPlanner} during a session.
+ * Records whether a reasoning step succeeded or failed and why, to guide future tree expansions.
+ */
 @Data
 public class RetrevalPattern {
 

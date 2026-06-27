@@ -7,6 +7,10 @@ import jakarta.persistence.Table;
 
 import java.time.LocalDateTime;
 
+/**
+ * JPA entity that stores a JSON-serialised {@link com.intentreactor.api.SessionState}
+ * in the {@code intent_reactor_sessions} table.
+ */
 @Entity
 @Table(name = "intent_reactor_sessions")
 public class SessionEntity {

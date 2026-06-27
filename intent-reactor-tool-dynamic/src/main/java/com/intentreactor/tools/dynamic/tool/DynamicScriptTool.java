@@ -18,6 +18,12 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+/**
+ * Generator tool ({@code isGenerator=true}) that manages LLM-authored ECMAScript 5.1 scripts at runtime.
+ * Supports three operations: {@code create} (LLM generates code → Rhino validation → persisted),
+ * {@code adapt} (archives existing version → generates updated code), and {@code list}.
+ * Retries code generation up to {@code max-generation-retries} times on Rhino validation failure.
+ */
 public class DynamicScriptTool implements Tool {
 
     private static final Logger log = LoggerFactory.getLogger(DynamicScriptTool.class);

@@ -9,6 +9,10 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
 
+/**
+ * Returns the current date and time, optionally formatted via the {@code format} parameter
+ * (defaults to ISO-8601 if omitted).
+ */
 @Component
 public class DateTimeTool implements Tool {
 

@@ -13,6 +13,7 @@ import com.intentreactor.api.SimplePlan;
 import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
+import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,20 +28,10 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * STORM (Synthesis of Topic Outlines through Retrieval and Multi-perspective) planner:
- * generates diverse expert personas, each researches the topic from their viewpoint,
+ * STORM planner: generates diverse expert personas, each researches the topic from their viewpoint,
  * then synthesizes all research into a structured response.
  * <p>
- * Phases:
- * PERSPECTIVES - generate expert personas
- * RESEARCH     - each persona researches (tool calls, round-robin)
- * SYNTHESIZE   - combine all notes into final answer
- * <p>
- * Stored in session.attributes:
- * storm_phase          : PERSPECTIVES | RESEARCH | SYNTHESIZE
- * storm_perspectives   : List<StormPerspective>
- * storm_persona_index  : int
- * storm_research_steps : int
+ * Prompt files configured via intent-reactor.planning.strategies.prompts.*
  * <p>
  * Activate with: intent-reactor.planning.strategy: storm
  */
@@ -53,36 +44,16 @@ public class StormPlanner implements Planner {
     private static final String PERSONA_INDEX_KEY = "storm_persona_index";
     private static final String RESEARCH_STEPS_KEY = "storm_research_steps";
 
-    private static final String PERSPECTIVES_SYSTEM =
-            "Ты эксперт по многопerspectival-анализу. Для заданной темы сгенерируй {count} " +
-                    "различных экспертных персон, которые исследуют её с разных точек зрения.\n\n" +
-                    "Верни JSON-массив:\n" +
-                    "[\n" +
-                    "  {\"name\": \"Технический аналитик\", \"viewpoint\": \"Исследует технические аспекты и реализацию\"},\n" +
-                    "  {\"name\": \"Бизнес-стратег\", \"viewpoint\": \"Анализирует деловые возможности и риски\"}\n" +
-                    "]";
-
-    private static final String RESEARCH_SYSTEM =
-            "Ты {persona_name} — {persona_viewpoint}.\n\n" +
-                    "Исследуй тему: {goal}\n\n" +
-                    "Используй доступные инструменты для поиска информации. " +
-                    "Верни JSON с инструментом для запроса:\n" +
-                    "{\n" +
-                    "  \"toolName\": \"knowledge_search\",\n" +
-                    "  \"parameters\": {\"query\": \"...конкретный запрос с твоей точки зрения...\"},\n" +
-                    "  \"rationale\": \"Почему именно этот запрос\"\n" +
-                    "}";
-
-    private static final String SYNTHESIZE_SYSTEM =
-            "Ты синтезатор знаний. Объедини исследования всех экспертов в структурированный, " +
-                    "исчерпывающий ответ на вопрос. Организуй информацию логично, устрани дублирование, " +
-                    "выдели ключевые инсайты. Результат должен быть полным и хорошо структурированным.";
-
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
     private final ObjectMapper objectMapper;
     private final int perspectiveCount;
     private final int maxResearchSteps;
+    private final PromptLoader promptLoader = new PromptLoader();
+    private final String perspectivesPromptPath;
+    private final String researchPromptPath;
+    private final String synthesizePromptPath;
+    private final StrategiesProperties.LabelsConfig labels;
 
     public StormPlanner(ChatClient chatClient, ToolProvider toolProvider,
                         ObjectMapper objectMapper, StrategiesProperties props) {
@@ -91,12 +62,16 @@ public class StormPlanner implements Planner {
         this.objectMapper = objectMapper;
         this.perspectiveCount = props.getStorm().getPerspectiveCount();
         this.maxResearchSteps = props.getStorm().getMaxResearchSteps();
+        this.perspectivesPromptPath = props.getPrompts().getStormPerspectives();
+        this.researchPromptPath = props.getPrompts().getStormResearch();
+        this.synthesizePromptPath = props.getPrompts().getStormSynthesize();
+        this.labels = props.getLabels();
     }
 
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "PERSPECTIVES");
-        String goal = getGoal(session, intent);
+        String goal = getGoal(intent);
 
         return switch (phase) {
             case "PERSPECTIVES" -> generatePerspectives(session, goal);
@@ -107,11 +82,13 @@ public class StormPlanner implements Planner {
     }
 
     private Plan generatePerspectives(SessionState session, String goal) {
-        String systemPrompt = PERSPECTIVES_SYSTEM.replace("{count}", String.valueOf(perspectiveCount));
         try {
+            String systemPrompt = promptLoader.load(perspectivesPromptPath,
+                    Map.of("count", perspectiveCount));
+
             String response = chatClient.prompt(new Prompt(List.of(
                     new SystemMessage(systemPrompt),
-                    new UserMessage("Тема: " + goal)
+                    new UserMessage(labels.getTopic() + goal)
             ))).call().content();
 
             List<StormPerspective> perspectives = parsePerspectives(response);
@@ -135,12 +112,10 @@ public class StormPlanner implements Planner {
 
     @SuppressWarnings("unchecked")
     private Plan researchNext(SessionState session, String goal) {
-        List<StormPerspective> perspectives =
-                loadPerspectives(session);
+        List<StormPerspective> perspectives = loadPerspectives(session);
         int personaIndex = (int) session.getAttributes().getOrDefault(PERSONA_INDEX_KEY, 0);
         int researchSteps = (int) session.getAttributes().getOrDefault(RESEARCH_STEPS_KEY, 0);
 
-        // Capture last OBSERVE result into current persona's notes
         if (researchSteps > 0 && personaIndex > 0) {
             List<Message> messages = session.getMessages();
             if (!messages.isEmpty()) {
@@ -160,20 +135,21 @@ public class StormPlanner implements Planner {
 
         StormPerspective persona = perspectives.get(personaIndex % perspectives.size());
 
-        String systemPrompt = RESEARCH_SYSTEM
-                .replace("{persona_name}", persona.getName())
-                .replace("{persona_viewpoint}", persona.getViewpoint())
-                .replace("{goal}", goal);
-
         try {
             List<Tool> tools = toolProvider.getAvailableTools(session);
             String toolsList = tools.stream()
                     .map(t -> t.getName() + ": " + t.getDescription())
                     .collect(Collectors.joining("\n"));
 
+            String systemPrompt = promptLoader.load(researchPromptPath, Map.of(
+                    "persona_name", persona.getName(),
+                    "persona_viewpoint", persona.getViewpoint(),
+                    "tools", toolsList
+            ));
+
             String response = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(systemPrompt + "\n\nДоступные инструменты:\n" + toolsList),
-                    new UserMessage("Проведи исследование от лица своей роли.")
+                    new SystemMessage(systemPrompt),
+                    new UserMessage(labels.getTopic() + goal + "\n\n" + labels.getConductResearch())
             ))).call().content();
 
             ResearchAction ra = parseResearchAction(response);
@@ -209,9 +185,12 @@ public class StormPlanner implements Planner {
         });
 
         try {
+            String system = promptLoader.load(synthesizePromptPath, Map.of());
+            String userMsg = labels.getTopic() + goal + labels.getExpertResearch() + allNotes;
+
             String response = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(SYNTHESIZE_SYSTEM),
-                    new UserMessage("Тема: " + goal + "\n\nИсследования экспертов:\n" + allNotes)
+                    new SystemMessage(system),
+                    new UserMessage(userMsg)
             ))).call().content();
 
             return new SimplePlan(List.of(SimplePlanStep.done(response)));
@@ -279,16 +258,9 @@ public class StormPlanner implements Planner {
         return s.strip();
     }
 
-    private String getGoal(SessionState session, IntentAnalysisResult intent) {
-        if (session.getPlanState() != null) {
-            String g = session.getPlanState().getGoalDescription();
-            if (g != null && !g.isBlank()) return g;
-        }
-        if (intent != null && intent.getReasoningSuggestion() != null
-                && !intent.getReasoningSuggestion().isBlank()) {
-            return intent.getReasoningSuggestion();
-        }
-        return "unknown";
+    private String getGoal(IntentAnalysisResult intent) {
+        if (intent == null || intent.getIntents().isEmpty()) return "unknown";
+        return intent.getIntents().get(0).getName();
     }
 
     private static class ResearchAction {

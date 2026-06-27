@@ -14,6 +14,10 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Reads the full text content of a file at the given path. Prefer {@link ReadFileTool}
+ * for large files — this tool loads the entire file at once without pagination.
+ */
 @Component
 public class FileContentExtractorTool implements Tool {
 

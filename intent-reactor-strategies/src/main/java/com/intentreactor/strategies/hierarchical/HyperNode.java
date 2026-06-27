@@ -6,6 +6,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Node in the HTP hypertree: represents one subgoal with its constraints, a mini-plan of
+ * {@link HtpStep} actions, execution status, and position within the decomposition hierarchy.
+ */
 @Data
 public class HyperNode {
 

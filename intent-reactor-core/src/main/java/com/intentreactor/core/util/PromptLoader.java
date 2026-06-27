@@ -13,6 +13,10 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Loads prompt templates from classpath resources and interpolates {@code {variable}}
+ * placeholders. Automatically injects {@code {currentDate}} into every template.
+ */
 public class PromptLoader {
 
     private static final Logger log = LoggerFactory.getLogger(PromptLoader.class);

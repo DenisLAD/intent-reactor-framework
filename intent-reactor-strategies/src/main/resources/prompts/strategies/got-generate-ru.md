@@ -1,11 +1,6 @@
 Ты управляешь графом мыслей (Graph-of-Thoughts) для решения задачи.
 Выбери следующую операцию для развития графа.
 
-Задача: {goal}
-
-Текущий граф мыслей:
-{graph_summary}
-
 Доступные операции:
 
 - GENERATE: создай новую мысль как дочернюю к существующей
@@ -17,7 +12,6 @@
 
 Верни JSON:
 
-```json
 {
   "operation": "GENERATE",
   "source_ids": ["id1"],
@@ -26,10 +20,9 @@
   "done": false,
   "final_answer": null
 }
-```
 
 - operation: одно из GENERATE, AGGREGATE, REFINE, SCORE
-- source_ids: ID узлов-источников (из графа выше, первые 8 символов ID)
+- source_ids: ID узлов-источников (первые 8 символов ID)
 - content: текст новой мысли или уточнения (для GENERATE/AGGREGATE/REFINE)
 - score: оценка 0.0-1.0 (только для SCORE), иначе null
 - done: true если найден финальный ответ

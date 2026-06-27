@@ -11,8 +11,10 @@ import com.intentreactor.api.SessionState;
 import com.intentreactor.api.SimpleAction;
 import com.intentreactor.api.SimplePlan;
 import com.intentreactor.api.SimplePlanStep;
+import com.intentreactor.api.StepType;
 import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
+import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,20 +24,17 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
- * HTP (HyperTree Planning): hierarchical goal decomposition into subgoals with constraints.
+ * Hierarchical Task Planning (HTP) planner: decomposes the goal into a hyper-tree of sub-goals
+ * with constraints and dependencies, plans each node with a mini execution plan, executes steps
+ * sequentially, and optionally refines failed nodes.
  * <p>
- * Unlike ToT (tree of thoughts), HTP's nodes are goal-oriented subgoals, each getting
- * its own mini-plan executed sequentially. Supports iterative refinement.
- * <p>
- * Phases: DECOMPOSE → PLAN_NODE → EXECUTE → REFINE → ADVANCE → SYNTHESIZE
- * <p>
- * Session attributes: htp_tree (HyperTree), htp_phase
+ * Prompt files configured via intent-reactor.planning.strategies.prompts.*
  * <p>
  * Activate with: intent-reactor.planning.strategy: htp
  */
@@ -43,34 +42,13 @@ public class HTPPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(HTPPlanner.class);
 
-    private static final String TREE_KEY = "htp_tree";
     private static final String PHASE_KEY = "htp_phase";
-
-    private static final String DECOMPOSE_SYSTEM =
-            "Ты — архитектор планирования. Декомпозируй цель на упорядоченные подцели.\n" +
-                    "Для каждой подцели укажи ограничения (бюджет, время, требования).\n\n" +
-                    "Доступные инструменты:\n{tools}\n\n" +
-                    "Верни JSON-массив (не более {maxSubgoals} элементов):\n" +
-                    "[{\"subgoal\": \"...\", \"constraints\": [\"...\", \"...\"]}]";
-
-    private static final String PLAN_NODE_SYSTEM =
-            "Ты — планировщик шагов. Составь конкретный план для выполнения подцели.\n" +
-                    "Подцель: {subgoal}\n" +
-                    "Ограничения: {constraints}\n\n" +
-                    "Доступные инструменты:\n{tools}\n\n" +
-                    "{refinementContext}" +
-                    "Верни JSON-массив шагов (не более {maxSteps}):\n" +
-                    "[{\"toolName\": \"...\", \"parameters\": {}, \"description\": \"...\"}]\n\n" +
-                    "Для шагов без инструмента используй null в поле toolName.";
-
-    private static final String REFINE_SYSTEM =
-            "Ты — ревьюер выполнения. Оцени, достигнута ли подцель по итогам выполнения шагов.\n\n" +
-                    "Подцель: {subgoal}\n" +
-                    "Ограничения: {constraints}\n\n" +
-                    "Верни JSON:\n{\"achieved\": true/false, \"reason\": \"...\", \"missing\": \"...\"}";
-
-    private static final String SYNTHESIZE_SYSTEM =
-            "Ты — финальный аналитик. Синтезируй итоговый ответ на основе выполненных подцелей.";
+    private static final String SUBGOALS_KEY = "htp_subgoals";
+    private static final String SUBGOAL_IDX_KEY = "htp_subgoal_idx";
+    private static final String STEPS_KEY = "htp_steps";
+    private static final String STEP_IDX_KEY = "htp_step_idx";
+    private static final String RESULTS_KEY = "htp_results";
+    private static final String REFINEMENT_COUNT_KEY = "htp_refine_count";
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
@@ -79,6 +57,12 @@ public class HTPPlanner implements Planner {
     private final int maxStepsPerNode;
     private final boolean refinementEnabled;
     private final int maxRefinementRetries;
+    private final PromptLoader promptLoader = new PromptLoader();
+    private final String decomposePromptPath;
+    private final String planNodePromptPath;
+    private final String refinePromptPath;
+    private final String synthesizePromptPath;
+    private final StrategiesProperties.LabelsConfig labels;
 
     public HTPPlanner(ChatClient chatClient, ToolProvider toolProvider,
                       ObjectMapper objectMapper, StrategiesProperties props) {
@@ -90,352 +74,251 @@ public class HTPPlanner implements Planner {
         this.maxStepsPerNode = cfg.getMaxStepsPerNode();
         this.refinementEnabled = cfg.isRefinementEnabled();
         this.maxRefinementRetries = cfg.getMaxRefinementRetries();
+        this.decomposePromptPath = props.getPrompts().getHtpDecompose();
+        this.planNodePromptPath = props.getPrompts().getHtpPlanNode();
+        this.refinePromptPath = props.getPrompts().getHtpRefine();
+        this.synthesizePromptPath = props.getPrompts().getHtpSynthesize();
+        this.labels = props.getLabels();
     }
 
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "DECOMPOSE");
-        String goal = getGoal(session, intent);
+        String goal = getGoal(intent);
 
         return switch (phase) {
             case "DECOMPOSE" -> decompose(session, goal);
-            case "PLAN_NODE" -> planNode(session, goal, null);
-            case "EXECUTE" -> execute(session, goal);
-            case "REFINE" -> refine(session, goal);
-            case "ADVANCE" -> advance(session, goal);
+            case "PLAN_NODE" -> planNode(session, goal, "");
+            case "EXECUTE_STEPS" -> executeNextStep(session, goal);
             case "SYNTHESIZE" -> synthesize(session, goal);
             default -> decompose(session, goal);
         };
     }
 
-    // ── DECOMPOSE ────────────────────────────────────────────────────────────────
-
     private Plan decompose(SessionState session, String goal) {
         List<Tool> tools = toolProvider.getAvailableTools(session);
-        String systemPrompt = DECOMPOSE_SYSTEM
-                .replace("{tools}", formatTools(tools))
-                .replace("{maxSubgoals}", String.valueOf(maxSubgoals));
+        String toolsList = tools.stream()
+                .map(t -> t.getName() + ": " + t.getDescription())
+                .collect(Collectors.joining("\n"));
 
         try {
+            String system = promptLoader.load(decomposePromptPath,
+                    Map.of("maxSubgoals", maxSubgoals, "tools", toolsList));
+
             String response = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(systemPrompt),
-                    new UserMessage("Цель: " + goal)
+                    new SystemMessage(system),
+                    new UserMessage(labels.getTask() + goal)
             ))).call().content();
 
-            List<Map<String, Object>> subgoalDefs = parseJsonArray(response);
-
-            HyperTree tree = HyperTree.withRoot(goal);
-            String rootId = tree.getRootId();
-
-            for (Map<String, Object> def : subgoalDefs) {
-                String subgoal = (String) def.getOrDefault("subgoal", "подзадача");
-                @SuppressWarnings("unchecked")
-                List<String> constraints = def.get("constraints") instanceof List
-                        ? (List<String>) def.get("constraints") : List.of();
-
-                HyperNode node = new HyperNode(subgoal, constraints, rootId, 1);
-                tree.getNodes().put(node.getId(), node);
-                tree.getNodes().get(rootId).getChildIds().add(node.getId());
+            List<Map<String, Object>> subgoals = parseList(response);
+            if (subgoals.isEmpty()) {
+                return new SimplePlan(List.of(SimplePlanStep.fail("HTP: Could not decompose goal: " + goal)));
             }
+            if (subgoals.size() > maxSubgoals) subgoals = subgoals.subList(0, maxSubgoals);
 
-            if (tree.getNodes().size() <= 1) {
-                // No subgoals parsed — single-node fallback
-                HyperNode single = new HyperNode(goal, List.of(), rootId, 1);
-                tree.getNodes().put(single.getId(), single);
-                tree.getNodes().get(rootId).getChildIds().add(single.getId());
-            }
-
-            saveTree(session, tree);
+            session.getAttributes().put(SUBGOALS_KEY, subgoals);
+            session.getAttributes().put(SUBGOAL_IDX_KEY, 0);
+            session.getAttributes().put(RESULTS_KEY, new LinkedHashMap<>());
             session.getAttributes().put(PHASE_KEY, "PLAN_NODE");
 
-            log.debug("[HTP] Decomposed into {} subgoals for session {}",
-                    tree.getNodes().size() - 1, session.getId());
-
-            return planNode(session, goal, null);
+            log.debug("[HTP] Decomposed into {} sub-goals for session {}", subgoals.size(), session.getId());
+            return planNode(session, goal, "");
 
         } catch (Exception e) {
-            log.warn("[HTP] Decompose failed: {}", e.getMessage());
-            HyperTree tree = HyperTree.withRoot(goal);
-            HyperNode single = new HyperNode(goal, List.of(), tree.getRootId(), 1);
-            tree.getNodes().put(single.getId(), single);
-            tree.getNodes().get(tree.getRootId()).getChildIds().add(single.getId());
-            saveTree(session, tree);
-            session.getAttributes().put(PHASE_KEY, "PLAN_NODE");
-            return planNode(session, goal, null);
+            log.warn("[HTP] Decomposition failed: {}", e.getMessage());
+            return new SimplePlan(List.of(SimplePlanStep.fail("HTP decomposition failed: " + e.getMessage())));
         }
     }
 
-    // ── PLAN_NODE ────────────────────────────────────────────────────────────────
-
+    @SuppressWarnings("unchecked")
     private Plan planNode(SessionState session, String goal, String refinementContext) {
-        HyperTree tree = loadTree(session);
-        Optional<HyperNode> optNode = tree.nextPendingNode();
-        if (optNode.isEmpty()) {
+        List<Map<String, Object>> subgoals =
+                (List<Map<String, Object>>) session.getAttributes().get(SUBGOALS_KEY);
+        int idx = (int) session.getAttributes().getOrDefault(SUBGOAL_IDX_KEY, 0);
+
+        if (idx >= subgoals.size()) {
             session.getAttributes().put(PHASE_KEY, "SYNTHESIZE");
             return synthesize(session, goal);
         }
 
-        HyperNode node = optNode.get();
-        tree.setCurrentNodeId(node.getId());
-        node.setStatus("IN_PROGRESS");
+        Map<String, Object> subgoal = subgoals.get(idx);
+        String subgoalDesc = (String) subgoal.getOrDefault("description", "Sub-goal " + (idx + 1));
+        String constraints = (String) subgoal.getOrDefault("constraints", "");
 
         List<Tool> tools = toolProvider.getAvailableTools(session);
-        String history = buildHistory(session);
-        String refCtx = refinementContext != null
-                ? "[REFINEMENT] Предыдущая попытка не достигла цели: " + refinementContext + "\n\n"
-                : "";
-
-        String systemPrompt = PLAN_NODE_SYSTEM
-                .replace("{subgoal}", node.getSubgoal())
-                .replace("{constraints}", String.join(", ", node.getConstraints()))
-                .replace("{tools}", formatTools(tools))
-                .replace("{maxSteps}", String.valueOf(maxStepsPerNode))
-                .replace("{refinementContext}", refCtx);
+        String toolsList = tools.stream()
+                .map(t -> t.getName() + ": " + t.getDescription())
+                .collect(Collectors.joining("\n"));
 
         try {
+            String system = promptLoader.load(planNodePromptPath, Map.of(
+                    "subgoal", subgoalDesc,
+                    "constraints", constraints.isBlank() ? "None" : constraints,
+                    "refinementContext", refinementContext.isBlank() ? "None" : refinementContext,
+                    "tools", toolsList,
+                    "maxSteps", maxStepsPerNode
+            ));
+
             String response = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(systemPrompt),
-                    new UserMessage("Общая цель: " + goal + "\n\nКонтекст:\n" + history)
+                    new SystemMessage(system),
+                    new UserMessage(labels.getTask() + goal)
             ))).call().content();
 
-            List<Map<String, Object>> stepDefs = parseJsonArray(response);
-            List<HtpStep> steps = new ArrayList<>();
-            for (Map<String, Object> def : stepDefs) {
-                String toolName = (String) def.get("toolName");
-                @SuppressWarnings("unchecked")
-                Map<String, Object> params = def.get("parameters") instanceof Map
-                        ? (Map<String, Object>) def.get("parameters") : new HashMap<>();
-                String description = (String) def.getOrDefault("description", "шаг");
-                steps.add(new HtpStep(toolName, params, description));
+            List<Map<String, Object>> steps = parseList(response);
+            if (steps.isEmpty()) {
+                session.getAttributes().put(SUBGOAL_IDX_KEY, idx + 1);
+                session.getAttributes().put(REFINEMENT_COUNT_KEY, 0);
+                return planNode(session, goal, "");
             }
-            if (steps.isEmpty()) steps.add(new HtpStep(null, Map.of(), "Выполнить: " + node.getSubgoal()));
+            if (steps.size() > maxStepsPerNode) steps = steps.subList(0, maxStepsPerNode);
 
-            node.setSteps(steps);
-            node.setCurrentStepIndex(0);
-            saveTree(session, tree);
-            session.getAttributes().put(PHASE_KEY, "EXECUTE");
+            session.getAttributes().put(STEPS_KEY, steps);
+            session.getAttributes().put(STEP_IDX_KEY, 0);
+            session.getAttributes().put(PHASE_KEY, "EXECUTE_STEPS");
+            session.getAttributes().put(REFINEMENT_COUNT_KEY, 0);
 
-            log.debug("[HTP] Planned {} steps for subgoal '{}' in session {}", steps.size(), node.getSubgoal(), session.getId());
-            return execute(session, goal);
+            log.debug("[HTP] Planned {} steps for sub-goal {} for session {}", steps.size(), idx + 1, session.getId());
+            return executeNextStep(session, goal);
 
         } catch (Exception e) {
-            log.warn("[HTP] PlanNode failed: {}", e.getMessage());
-            node.setSteps(List.of(new HtpStep(null, Map.of(), "Выполнить: " + node.getSubgoal())));
-            node.setCurrentStepIndex(0);
-            saveTree(session, tree);
-            session.getAttributes().put(PHASE_KEY, "EXECUTE");
-            return execute(session, goal);
+            log.warn("[HTP] Node planning failed: {}", e.getMessage());
+            session.getAttributes().put(SUBGOAL_IDX_KEY, idx + 1);
+            return planNode(session, goal, "");
         }
     }
 
-    // ── EXECUTE ──────────────────────────────────────────────────────────────────
+    @SuppressWarnings("unchecked")
+    private Plan executeNextStep(SessionState session, String goal) {
+        List<Map<String, Object>> steps =
+                (List<Map<String, Object>>) session.getAttributes().get(STEPS_KEY);
+        int stepIdx = (int) session.getAttributes().getOrDefault(STEP_IDX_KEY, 0);
 
-    private Plan execute(SessionState session, String goal) {
-        HyperTree tree = loadTree(session);
-        HyperNode node = tree.getCurrent();
-        if (node == null) {
-            session.getAttributes().put(PHASE_KEY, "SYNTHESIZE");
-            return synthesize(session, goal);
-        }
-
-        // Absorb last observation into previous step
-        if (node.getCurrentStepIndex() > 0) {
-            List<Message> messages = session.getMessages();
-            for (int i = messages.size() - 1; i >= 0; i--) {
-                Message msg = messages.get(i);
-                if (msg.getRole() == Message.Role.SYSTEM) {
-                    HtpStep prevStep = node.getSteps().get(node.getCurrentStepIndex() - 1);
-                    if (prevStep.getObservation() == null) {
-                        prevStep.setObservation(msg.getContent());
-                    }
-                    break;
+        List<Message> messages = session.getMessages();
+        if (stepIdx > 0 && !messages.isEmpty()) {
+            Message last = messages.get(messages.size() - 1);
+            if (last.getRole() == Message.Role.SYSTEM) {
+                String content = last.getContent();
+                boolean failed = content != null && content.startsWith("ERROR:");
+                if (failed && refinementEnabled) {
+                    return tryRefine(session, goal, content);
                 }
             }
         }
 
-        // Check if all steps done
-        if (node.getCurrentStepIndex() >= node.getSteps().size()) {
-            saveTree(session, tree);
-            if (refinementEnabled) {
-                session.getAttributes().put(PHASE_KEY, "REFINE");
-                return refine(session, goal);
-            } else {
-                node.setStatus("DONE");
-                saveTree(session, tree);
-                session.getAttributes().put(PHASE_KEY, "ADVANCE");
-                return advance(session, goal);
-            }
-        }
-
-        HtpStep step = node.getSteps().get(node.getCurrentStepIndex());
-        node.setCurrentStepIndex(node.getCurrentStepIndex() + 1);
-        saveTree(session, tree);
-
-        if (step.getToolName() != null && !step.getToolName().isBlank()) {
-            Action action = new SimpleAction(step.getToolName(), step.getParameters());
-            return new SimplePlan(List.of(SimplePlanStep.act(action, step.getDescription(), false)));
-        }
-        return new SimplePlan(List.of(SimplePlanStep.reason(step.getDescription())));
-    }
-
-    // ── REFINE ───────────────────────────────────────────────────────────────────
-
-    private Plan refine(SessionState session, String goal) {
-        HyperTree tree = loadTree(session);
-        HyperNode node = tree.getCurrent();
-        if (node == null) {
-            session.getAttributes().put(PHASE_KEY, "ADVANCE");
-            return advance(session, goal);
-        }
-
-        String observationLog = buildObservationLog(node);
-
-        String systemPrompt = REFINE_SYSTEM
-                .replace("{subgoal}", node.getSubgoal())
-                .replace("{constraints}", String.join(", ", node.getConstraints()));
-
-        try {
-            String response = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(systemPrompt),
-                    new UserMessage("Журнал выполнения:\n" + observationLog)
-            ))).call().content();
-
-            Map<String, Object> result = parseJsonObject(response);
-            boolean achieved = Boolean.TRUE.equals(result.get("achieved"));
-
-            if (achieved) {
-                node.setStatus("DONE");
-                saveTree(session, tree);
-                log.debug("[HTP] Subgoal '{}' achieved in session {}", node.getSubgoal(), session.getId());
-                session.getAttributes().put(PHASE_KEY, "ADVANCE");
-                return advance(session, goal);
-            }
-
-            // Not achieved — try refinement
-            String missing = (String) result.getOrDefault("missing", "неизвестно");
-            node.setRefinementRetries(node.getRefinementRetries() + 1);
-
-            if (node.getRefinementRetries() <= maxRefinementRetries) {
-                node.setStatus("NEEDS_REFINEMENT");
-                node.setSteps(new ArrayList<>());
-                node.setCurrentStepIndex(0);
-                saveTree(session, tree);
-                log.debug("[HTP] Refining subgoal '{}', retry {}/{} in session {}",
-                        node.getSubgoal(), node.getRefinementRetries(), maxRefinementRetries, session.getId());
-                session.getAttributes().put(PHASE_KEY, "PLAN_NODE");
-                return planNode(session, goal, missing);
-            }
-
-            // Max retries exceeded
-            node.setStatus("FAILED");
-            saveTree(session, tree);
-            log.debug("[HTP] Subgoal '{}' FAILED after {} retries in session {}",
-                    node.getSubgoal(), node.getRefinementRetries(), session.getId());
-            session.getAttributes().put(PHASE_KEY, "ADVANCE");
-            return advance(session, goal);
-
-        } catch (Exception e) {
-            log.warn("[HTP] Refine failed: {}", e.getMessage());
-            node.setStatus("DONE");
-            saveTree(session, tree);
-            session.getAttributes().put(PHASE_KEY, "ADVANCE");
-            return advance(session, goal);
-        }
-    }
-
-    // ── ADVANCE ──────────────────────────────────────────────────────────────────
-
-    private Plan advance(SessionState session, String goal) {
-        HyperTree tree = loadTree(session);
-        Optional<HyperNode> nextNode = tree.nextPendingNode();
-
-        if (nextNode.isPresent()) {
-            saveTree(session, tree);
+        if (steps == null || stepIdx >= steps.size()) {
+            collectSubgoalResult(session, goal);
             session.getAttributes().put(PHASE_KEY, "PLAN_NODE");
-            return planNode(session, goal, null);
+            return planNode(session, goal, "");
         }
 
-        session.getAttributes().put(PHASE_KEY, "SYNTHESIZE");
-        return synthesize(session, goal);
-    }
+        Map<String, Object> step = steps.get(stepIdx);
+        String actionDesc = (String) step.getOrDefault("action", "Step " + (stepIdx + 1));
+        String toolName = (String) step.get("toolName");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> parameters = step.get("parameters") instanceof Map
+                ? (Map<String, Object>) step.get("parameters") : Map.of();
 
-    // ── SYNTHESIZE ───────────────────────────────────────────────────────────────
+        session.getAttributes().put(STEP_IDX_KEY, stepIdx + 1);
 
-    private Plan synthesize(SessionState session, String goal) {
-        HyperTree tree = loadTree(session);
-        StringBuilder summary = new StringBuilder("Цель: " + goal + "\n\nВыполненные подцели:\n");
-
-        for (HyperNode node : tree.getNodes().values()) {
-            if (node.getId().equals(tree.getRootId())) continue;
-            summary.append("- [").append(node.getStatus()).append("] ").append(node.getSubgoal()).append("\n");
-            String obsLog = buildObservationLog(node);
-            if (!obsLog.isBlank()) {
-                summary.append("  Результаты:\n");
-                obsLog.lines().forEach(line -> summary.append("  ").append(line).append("\n"));
-            }
+        if (toolName == null || toolName.isBlank()) {
+            return new SimplePlan(List.of(new SimplePlanStep(StepType.REASON, null, actionDesc, false)));
         }
 
-        try {
-            String finalAnswer = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(SYNTHESIZE_SYSTEM),
-                    new UserMessage(summary.toString())
-            ))).call().content();
-            return new SimplePlan(List.of(SimplePlanStep.done(finalAnswer)));
-        } catch (Exception e) {
-            return new SimplePlan(List.of(SimplePlanStep.done(summary.toString())));
+        List<Tool> tools = toolProvider.getAvailableTools(session);
+        boolean toolExists = tools.stream().anyMatch(t -> t.getName().equals(toolName));
+        if (!toolExists) {
+            return new SimplePlan(List.of(new SimplePlanStep(StepType.REASON, null, actionDesc, false)));
         }
-    }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────────
-
-    private String buildObservationLog(HyperNode node) {
-        StringBuilder sb = new StringBuilder();
-        for (HtpStep step : node.getSteps()) {
-            sb.append("- ").append(step.getDescription());
-            if (step.getObservation() != null) {
-                sb.append(" → ").append(truncate(step.getObservation(), 200));
-            }
-            sb.append("\n");
-        }
-        return sb.toString();
-    }
-
-    private String buildHistory(SessionState session) {
-        List<Message> messages = session.getMessages();
-        int start = Math.max(0, messages.size() - 6);
-        StringBuilder sb = new StringBuilder();
-        for (int i = start; i < messages.size(); i++) {
-            Message msg = messages.get(i);
-            sb.append(msg.getRole().name()).append(": ").append(truncate(msg.getContent(), 300)).append("\n");
-        }
-        return sb.toString();
-    }
-
-    private String formatTools(List<Tool> tools) {
-        StringBuilder sb = new StringBuilder();
-        for (Tool tool : tools) {
-            sb.append("- ").append(tool.getName()).append(": ").append(tool.getDescription()).append("\n");
-        }
-        return sb.toString();
-    }
-
-    private String truncate(String s, int max) {
-        if (s == null) return "";
-        return s.length() > max ? s.substring(0, max) + "..." : s;
-    }
-
-    private void saveTree(SessionState session, HyperTree tree) {
-        session.getAttributes().put(TREE_KEY, tree);
-    }
-
-    private HyperTree loadTree(SessionState session) {
-        Object raw = session.getAttributes().get(TREE_KEY);
-        if (raw == null) return HyperTree.withRoot("unknown");
-        return objectMapper.convertValue(raw, HyperTree.class);
+        boolean isRisky = tools.stream().anyMatch(t -> t.getName().equals(toolName) && t.isRisky());
+        Action action = new SimpleAction(toolName, parameters);
+        log.debug("[HTP] Executing step {}/{} for session {}", stepIdx + 1, steps.size(), session.getId());
+        return new SimplePlan(List.of(SimplePlanStep.act(action, actionDesc, isRisky)));
     }
 
     @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> parseJsonArray(String response) {
+    private Plan tryRefine(SessionState session, String goal, String errorContext) {
+        int refineCount = (int) session.getAttributes().getOrDefault(REFINEMENT_COUNT_KEY, 0);
+        if (refineCount >= maxRefinementRetries) {
+            log.debug("[HTP] Max refinements reached, moving to next sub-goal for session {}", session.getId());
+            collectSubgoalResult(session, goal);
+            session.getAttributes().put(PHASE_KEY, "PLAN_NODE");
+            return planNode(session, goal, "");
+        }
+
+        List<Map<String, Object>> subgoals =
+                (List<Map<String, Object>>) session.getAttributes().get(SUBGOALS_KEY);
+        int idx = (int) session.getAttributes().getOrDefault(SUBGOAL_IDX_KEY, 0);
+        Map<String, Object> subgoal = subgoals.get(idx);
+        String subgoalDesc = (String) subgoal.getOrDefault("description", "Sub-goal " + (idx + 1));
+        String constraints = (String) subgoal.getOrDefault("constraints", "");
+
+        try {
+            String system = promptLoader.load(refinePromptPath, Map.of(
+                    "subgoal", subgoalDesc,
+                    "constraints", constraints.isBlank() ? "None" : constraints
+            ));
+
+            String response = chatClient.prompt(new Prompt(List.of(
+                    new SystemMessage(system),
+                    new UserMessage(labels.getTask() + goal + "\n\nError context: " + errorContext)
+            ))).call().content();
+
+            List<Map<String, Object>> newSteps = parseList(response);
+            if (!newSteps.isEmpty()) {
+                if (newSteps.size() > maxStepsPerNode) newSteps = newSteps.subList(0, maxStepsPerNode);
+                session.getAttributes().put(STEPS_KEY, newSteps);
+                session.getAttributes().put(STEP_IDX_KEY, 0);
+                session.getAttributes().put(REFINEMENT_COUNT_KEY, refineCount + 1);
+                log.debug("[HTP] Refined plan with {} steps for session {}", newSteps.size(), session.getId());
+                return executeNextStep(session, goal);
+            }
+        } catch (Exception e) {
+            log.warn("[HTP] Refinement failed: {}", e.getMessage());
+        }
+
+        collectSubgoalResult(session, goal);
+        session.getAttributes().put(PHASE_KEY, "PLAN_NODE");
+        return planNode(session, goal, "");
+    }
+
+    @SuppressWarnings("unchecked")
+    private void collectSubgoalResult(SessionState session, String goal) {
+        int idx = (int) session.getAttributes().getOrDefault(SUBGOAL_IDX_KEY, 0);
+        Map<String, String> results =
+                (Map<String, String>) session.getAttributes().computeIfAbsent(RESULTS_KEY, k -> new LinkedHashMap<>());
+
+        List<Message> messages = session.getMessages();
+        String result = messages.isEmpty() ? "Completed"
+                : messages.get(messages.size() - 1).getContent();
+        results.put("subgoal-" + (idx + 1), result);
+        session.getAttributes().put(RESULTS_KEY, results);
+        session.getAttributes().put(SUBGOAL_IDX_KEY, idx + 1);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Plan synthesize(SessionState session, String goal) {
+        Map<String, String> results =
+                (Map<String, String>) session.getAttributes().getOrDefault(RESULTS_KEY, Map.of());
+        StringBuilder combined = new StringBuilder();
+        results.forEach((k, v) -> combined.append(k).append(": ").append(v).append("\n"));
+
+        try {
+            String system = promptLoader.load(synthesizePromptPath, Map.of());
+            String userMsg = labels.getTask() + goal + "\n\n" + combined;
+
+            String response = chatClient.prompt(new Prompt(List.of(
+                    new SystemMessage(system),
+                    new UserMessage(userMsg)
+            ))).call().content();
+
+            return new SimplePlan(List.of(SimplePlanStep.done(response)));
+        } catch (Exception e) {
+            return new SimplePlan(List.of(SimplePlanStep.done(combined.toString())));
+        }
+    }
+
+    private List<Map<String, Object>> parseList(String response) {
         try {
             String cleaned = stripMarkdownFences(response.strip());
             int start = cleaned.indexOf('[');
@@ -445,20 +328,6 @@ public class HTPPlanner implements Planner {
             });
         } catch (Exception e) {
             return new ArrayList<>();
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> parseJsonObject(String response) {
-        try {
-            String cleaned = stripMarkdownFences(response.strip());
-            int start = cleaned.indexOf('{');
-            int end = cleaned.lastIndexOf('}');
-            if (start >= 0 && end > start) cleaned = cleaned.substring(start, end + 1);
-            return objectMapper.readValue(cleaned, new TypeReference<>() {
-            });
-        } catch (Exception e) {
-            return new HashMap<>();
         }
     }
 
@@ -472,18 +341,8 @@ public class HTPPlanner implements Planner {
         return s.strip();
     }
 
-    private String getGoal(SessionState session, IntentAnalysisResult intent) {
-        if (session.getPlanState() != null) {
-            String g = session.getPlanState().getGoalDescription();
-            if (g != null && !g.isBlank()) return g;
-        }
-        if (intent != null && intent.getReasoningSuggestion() != null
-                && !intent.getReasoningSuggestion().isBlank()) {
-            return intent.getReasoningSuggestion();
-        }
-        if (intent != null && !intent.getIntents().isEmpty()) {
-            return intent.getIntents().get(0).getName();
-        }
-        return "unknown";
+    private String getGoal(IntentAnalysisResult intent) {
+        if (intent == null || intent.getIntents().isEmpty()) return "unknown";
+        return intent.getIntents().get(0).getName();
     }
 }

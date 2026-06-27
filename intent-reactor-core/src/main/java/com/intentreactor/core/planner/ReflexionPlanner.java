@@ -18,6 +18,11 @@ import org.springframework.ai.chat.prompt.Prompt;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Decorator over {@link DefaultReACTPlanner} that appends a {@code [REFLECTION]} critique
+ * to the session history after each Observe step, guiding the LLM to self-correct
+ * before the next Reason cycle.
+ */
 public class ReflexionPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(ReflexionPlanner.class);

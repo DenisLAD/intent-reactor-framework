@@ -37,6 +37,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+/**
+ * Language Agent Tree Search (LATS) planner. Uses Monte-Carlo Tree Search with
+ * UCB selection to explore action branches; the search tree is persisted in
+ * {@code session.attributes["searchTree"]} and committed once a goal-reaching path is found.
+ */
 public class LATSPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(LATSPlanner.class);

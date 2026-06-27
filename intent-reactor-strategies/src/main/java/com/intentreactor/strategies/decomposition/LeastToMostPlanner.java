@@ -10,6 +10,7 @@ import com.intentreactor.api.SessionState;
 import com.intentreactor.api.SimplePlan;
 import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.StepType;
+import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,11 +29,7 @@ import java.util.stream.Collectors;
  * Least-to-Most planner: decomposes the goal into ordered subproblems (simplest first),
  * then solves each one in order, using previous solutions as context for subsequent ones.
  * <p>
- * Phases stored in session.attributes:
- * ltm_phase    : DECOMPOSE | SOLVE
- * ltm_tasks    : List<Map> [{id, task, depends_on:[]}]
- * ltm_results  : Map<Integer, String>
- * ltm_index    : int
+ * Prompt files configured via intent-reactor.planning.strategies.prompts.*
  * <p>
  * Activate with: intent-reactor.planning.strategy: least-to-most
  */
@@ -45,36 +42,30 @@ public class LeastToMostPlanner implements Planner {
     private static final String RESULTS_KEY = "ltm_results";
     private static final String INDEX_KEY = "ltm_index";
 
-    private static final String DECOMPOSE_SYSTEM =
-            "Ты эксперт по декомпозиции задач. Разбей задачу на подзадачи, " +
-                    "упорядоченные от простейшей к наиболее сложной. Каждая подзадача должна быть " +
-                    "атомарной и конкретной. Результаты более простых задач могут использоваться в сложных.\n\n" +
-                    "Верни JSON-массив:\n" +
-                    "[\n" +
-                    "  {\"id\": 1, \"task\": \"Найти базовую информацию о X\", \"depends_on\": []},\n" +
-                    "  {\"id\": 2, \"task\": \"Применить X к Y\", \"depends_on\": [1]}\n" +
-                    "]\n\n" +
-                    "Минимум 2, максимум {max} подзадач. Порядок от простого к сложному обязателен.";
-
-    private static final String SOLVE_SYSTEM =
-            "Ты решаешь подзадачу. У тебя есть контекст из уже решённых более простых подзадач. " +
-                    "Дай чёткий, конкретный ответ на подзадачу. Используй контекст если это помогает.";
-
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final int maxSubproblems;
+    private final PromptLoader promptLoader = new PromptLoader();
+    private final String decomposePromptPath;
+    private final String solvePromptPath;
+    private final String synthesizePromptPath;
+    private final StrategiesProperties.LabelsConfig labels;
 
     public LeastToMostPlanner(ChatClient chatClient, ObjectMapper objectMapper,
                               StrategiesProperties props) {
         this.chatClient = chatClient;
         this.objectMapper = objectMapper;
         this.maxSubproblems = props.getLeastToMost().getMaxSubproblems();
+        this.decomposePromptPath = props.getPrompts().getLeastToMostDecompose();
+        this.solvePromptPath = props.getPrompts().getLeastToMostSolve();
+        this.synthesizePromptPath = props.getPrompts().getLeastToMostSynthesize();
+        this.labels = props.getLabels();
     }
 
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "DECOMPOSE");
-        String goal = getGoal(session, intent);
+        String goal = getGoal(intent);
 
         return switch (phase) {
             case "DECOMPOSE" -> decompose(session, goal);
@@ -85,10 +76,11 @@ public class LeastToMostPlanner implements Planner {
 
     private Plan decompose(SessionState session, String goal) {
         try {
-            String systemPrompt = DECOMPOSE_SYSTEM.replace("{max}", String.valueOf(maxSubproblems));
+            String systemPrompt = promptLoader.load(decomposePromptPath,
+                    Map.of("max", maxSubproblems));
             String response = chatClient.prompt(new Prompt(List.of(
                     new SystemMessage(systemPrompt),
-                    new UserMessage("Задача: " + goal)
+                    new UserMessage(labels.getTask() + goal)
             ))).call().content();
 
             List<Map<String, Object>> tasks = parseTasks(response);
@@ -116,7 +108,6 @@ public class LeastToMostPlanner implements Planner {
                 (Map<String, String>) session.getAttributes().get(RESULTS_KEY);
         int index = (int) session.getAttributes().getOrDefault(INDEX_KEY, 0);
 
-        // Capture result from last OBSERVE
         if (index > 0) {
             List<Message> messages = session.getMessages();
             if (!messages.isEmpty()) {
@@ -136,14 +127,14 @@ public class LeastToMostPlanner implements Planner {
         String taskDesc = (String) task.get("task");
         session.getAttributes().put(INDEX_KEY, index + 1);
 
-        // Build context from previous results
         StringBuilder context = new StringBuilder();
         if (!results.isEmpty()) {
-            context.append("\n\nРезультаты предыдущих подзадач:\n");
-            results.forEach((k, v) -> context.append("Подзадача ").append(k).append(": ").append(v).append("\n"));
+            context.append(labels.getPreviousResults());
+            String subLabel = labels.getSubtask().replaceFirst("^\\[", "").replaceFirst("\\s*$", " ");
+            results.forEach((k, v) -> context.append(subLabel).append(k).append(": ").append(v).append("\n"));
         }
 
-        session.addMessage(Message.system("[SUBTASK " + (index + 1) + "/" + tasks.size() + "] " + taskDesc));
+        session.addMessage(Message.system(labels.getSubtask() + (index + 1) + "/" + tasks.size() + "] " + taskDesc));
         log.debug("[LeastToMost] Solving task {}/{} for session {}", index + 1, tasks.size(), session.getId());
 
         return new SimplePlan(List.of(new SimplePlanStep(StepType.REASON, null,
@@ -154,9 +145,10 @@ public class LeastToMostPlanner implements Planner {
         String combined = results.values().stream()
                 .collect(Collectors.joining("\n---\n"));
         try {
+            String synthesizeSystem = promptLoader.load(synthesizePromptPath, Map.of());
             String response = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage("Синтезируй финальный ответ из результатов всех подзадач."),
-                    new UserMessage("Исходная задача: " + goal + "\n\nРезультаты подзадач:\n" + combined)
+                    new SystemMessage(synthesizeSystem),
+                    new UserMessage(labels.getOriginalTask() + goal + labels.getSubtaskResults() + combined)
             ))).call().content();
             return new SimplePlan(List.of(SimplePlanStep.done(response)));
         } catch (Exception e) {
@@ -188,15 +180,8 @@ public class LeastToMostPlanner implements Planner {
         return s.strip();
     }
 
-    private String getGoal(SessionState session, IntentAnalysisResult intent) {
-        if (session.getPlanState() != null) {
-            String g = session.getPlanState().getGoalDescription();
-            if (g != null && !g.isBlank()) return g;
-        }
-        if (intent != null && intent.getReasoningSuggestion() != null
-                && !intent.getReasoningSuggestion().isBlank()) {
-            return intent.getReasoningSuggestion();
-        }
-        return "unknown";
+    private String getGoal(IntentAnalysisResult intent) {
+        if (intent == null || intent.getIntents().isEmpty()) return "unknown";
+        return intent.getIntents().get(0).getName();
     }
 }

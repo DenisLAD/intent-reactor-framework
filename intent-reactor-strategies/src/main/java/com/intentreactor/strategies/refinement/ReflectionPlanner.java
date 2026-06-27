@@ -7,6 +7,7 @@ import com.intentreactor.api.Plan;
 import com.intentreactor.api.Planner;
 import com.intentreactor.api.SessionState;
 import com.intentreactor.api.StepType;
+import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,8 +25,7 @@ import java.util.Map;
  * satisfaction threshold (and max iterations not reached), the critique is injected into the
  * session and the delegate is asked to improve its answer.
  * <p>
- * Unlike ReflexionPlanner (which reacts to [TOOL_ERROR]), this strategy proactively iterates
- * to improve quality regardless of errors.
+ * Prompt files configured via intent-reactor.planning.strategies.prompts.*
  * <p>
  * Activate with: intent-reactor.planning.strategy: reflection
  */
@@ -33,29 +33,16 @@ public class ReflectionPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(ReflectionPlanner.class);
     private static final String REFLECTION_COUNT_KEY = "reflection_count";
-
-    private static final String CRITIC_SYSTEM_PROMPT =
-            "Ты строгий критик и рецензент. Твоя задача — оценить качество ответа агента и " +
-                    "указать на конкретные недостатки. Будь требователен и конструктивен.\n\n" +
-                    "Верни JSON:\n" +
-                    "{\n" +
-                    "  \"score\": 0.85,\n" +
-                    "  \"satisfied\": true,\n" +
-                    "  \"critique\": \"Ответ точный, но не хватает примера.\",\n" +
-                    "  \"improvement\": \"Добавь конкретный пример использования.\"\n" +
-                    "}";
-
-    private static final String CRITIC_USER_TEMPLATE =
-            "Исходная задача: {goal}\n\n" +
-                    "Ответ агента: {answer}\n\n" +
-                    "Оцени ответ по шкале от 0.0 до 1.0. " +
-                    "Укажи конкретные недостатки и как их исправить. Верни JSON.";
+    private static final String BASE_CRITIQUE = "classpath:prompts/strategies/reflection-critique.md";
 
     private final Planner delegate;
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final int maxIterations;
     private final double satisfactionThreshold;
+    private final PromptLoader promptLoader = new PromptLoader();
+    private final String userPromptPath;
+    private final StrategiesProperties.LabelsConfig labels;
 
     public ReflectionPlanner(Planner delegate, ChatClient chatClient, ObjectMapper objectMapper,
                              StrategiesProperties strategiesProperties) {
@@ -64,13 +51,14 @@ public class ReflectionPlanner implements Planner {
         this.objectMapper = objectMapper;
         this.maxIterations = strategiesProperties.getReflection().getMaxIterations();
         this.satisfactionThreshold = strategiesProperties.getReflection().getSatisfactionThreshold();
+        this.userPromptPath = strategiesProperties.getPrompts().getReflectionUser();
+        this.labels = strategiesProperties.getLabels();
     }
 
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         Plan plan = delegate.plan(session, intent);
 
-        // Only evaluate when the delegate wants to conclude
         if (plan.steps().isEmpty() || plan.steps().get(0).type() != StepType.DONE) {
             return plan;
         }
@@ -85,12 +73,14 @@ public class ReflectionPlanner implements Planner {
         String goal = intent.getIntents().isEmpty() ? "" : intent.getIntents().get(0).getName();
 
         try {
-            String userPrompt = CRITIC_USER_TEMPLATE
-                    .replace("{goal}", goal)
-                    .replace("{answer}", finalAnswer != null ? finalAnswer : "");
+            String criticSystem = promptLoader.load(BASE_CRITIQUE, Map.of());
+            String userPrompt = promptLoader.load(userPromptPath, Map.of(
+                    "goal", goal,
+                    "answer", finalAnswer != null ? finalAnswer : ""
+            ));
 
             String criticResponse = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(CRITIC_SYSTEM_PROMPT),
+                    new SystemMessage(criticSystem),
                     new UserMessage(userPrompt)
             ))).call().content();
 
@@ -102,9 +92,9 @@ public class ReflectionPlanner implements Planner {
             }
 
             session.addMessage(Message.system(
-                    "[CRITIQUE] Оценка: " + result.score + "/1.0\n" +
-                            "Недостатки: " + result.critique + "\n" +
-                            "Улучшение: " + result.improvement));
+                    labels.getCritique() + result.score + "/1.0" +
+                            labels.getWeaknesses() + result.critique +
+                            labels.getImprovement() + result.improvement));
             session.getAttributes().put(REFLECTION_COUNT_KEY, reflectionCount + 1);
             log.debug("[Reflection] Iteration {}/{} for session {}: score={}", reflectionCount + 1, maxIterations, session.getId(), result.score);
 

@@ -13,6 +13,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * {@link ToolProvider} that merges static {@link Tool} beans with dynamically loaded
+ * {@link ScriptToolWrapper} instances from the {@link ScriptRepository}.
+ * Dynamic tools are lazily cached and invalidated via {@link #invalidateCache()} whenever
+ * the repository changes (triggered by {@link com.intentreactor.tools.dynamic.repository.InvalidationAwareScriptRepository}).
+ */
 public class DynamicToolProvider implements ToolProvider {
 
     private static final Logger log = LoggerFactory.getLogger(DynamicToolProvider.class);

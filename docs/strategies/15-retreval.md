@@ -38,11 +38,12 @@ Once the goal is reached or the tree depth limit is hit, all executed nodes are 
 
 | Attribute | Description |
 |---|---|
-| `retreval_tree` | `RetrevalTree` — the full reasoning tree |
-| `retreval_memory` | `List<RetrevalPattern>` — successful step patterns accumulated across turns |
-| `retreval_phase` | Current phase: `INITIAL` / `EXPAND` / `VALIDATE` / `EXECUTE` / `BACKTRACK` / `SYNTHESIZE` |
-| `retreval_candidates` | Candidate nodes being validated in the current VALIDATE phase |
-| `retreval_validate_idx` | Index of the candidate currently being scored |
+| `retreval_tree` | `RetrevalTree` — the full reasoning tree (JSON-serialized) |
+| `retreval_phase` | Current phase: `EXPAND` / `SYNTHESIZE` |
+| `retreval_frontier` | `List<String>` — node IDs ready for the next expansion (beam) |
+| `retreval_cur_node` | ID of the node whose tool call is in progress (cleared after result is collected) |
+| `retreval_patterns` | JSON-serialized `List<RetrevalPattern>` — accumulated success/failure patterns |
+| `retreval_backtrack` | `[BACKTRACK: type] description` string injected into the next EXPAND prompt |
 
 ---
 
@@ -56,11 +57,16 @@ intent-reactor:
       retreval:
         max-tree-depth: 4         # tree depth limit before forced SYNTHESIZE
         candidates-per-step: 3    # candidates generated per EXPAND
-        validation-threshold: 0.6 # minimum score to accept a candidate
+        validation-threshold: 0.6 # minimum score (avg self+critic) to mark a node VALIDATED
+        beam-width: 2             # max frontier size (parallel candidate paths kept alive)
+        final-threshold: 0.75     # score threshold to mark a node DONE immediately
+        use-external-critic: true # score each candidate with a second critic prompt
+        memory-enabled: true      # accumulate success/failure patterns across expansions
+        max-memories: 10          # max patterns stored in retreval_patterns
     max-steps: 40
 ```
 
-The short-circuit threshold (0.8) is fixed in code. Increase `max-steps` for deep trees: each node requires at least 2 LLM calls (expand + validate).
+When `use-external-critic: false`, only self-evaluation is used. Increase `max-steps` for deep trees: each node requires at least 2 LLM calls (expand + score).
 
 ---
 

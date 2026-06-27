@@ -47,6 +47,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Primary implementation of {@link com.intentreactor.api.IntentReactorService}.
+ * Orchestrates intent preprocessing, planning, tool execution, confirmation flow,
+ * and multi-intent dispatch.
+ */
 public class IntentReactorServiceImpl implements IntentReactorService {
 
     private static final Logger log = LoggerFactory.getLogger(IntentReactorServiceImpl.class);

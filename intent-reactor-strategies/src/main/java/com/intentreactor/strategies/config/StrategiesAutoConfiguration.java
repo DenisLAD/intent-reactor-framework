@@ -22,6 +22,7 @@ import com.intentreactor.strategies.refinement.StepBackPlanner;
 import com.intentreactor.strategies.search.GraphOfThoughtsPlanner;
 import com.intentreactor.strategies.search.ReTreValPlanner;
 import com.intentreactor.strategies.search.TreeOfThoughtsPlanner;
+import com.intentreactor.core.util.PromptLoader;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -34,6 +35,11 @@ import org.springframework.context.annotation.Bean;
 
 import java.util.List;
 
+/**
+ * Spring Boot auto-configuration that registers the extended strategy planners:
+ * CoT, Zero-Shot CoT, StepBack, Reflection, SelfAsk, LeastToMost, PlanAndSolve,
+ * ToT, GoT, SelfDiscover, STORM, ReTreVal, MAP, HTP, and KnowAgent.
+ */
 @AutoConfiguration
 @AutoConfigureBefore(IntentReactorAutoConfiguration.class)
 @ConditionalOnClass(ChatClient.class)
@@ -58,11 +64,12 @@ public class StrategiesAutoConfiguration {
     @ConditionalOnProperty(prefix = "intent-reactor.planning", name = "strategy", havingValue = "zero-shot-cot")
     public Planner zeroShotCoTPlanner(ChatClient.Builder chatClientBuilder, ToolProvider toolProvider,
                                       IntentReactorProperties props, ObjectMapper objectMapper,
+                                      StrategiesProperties strategiesProperties,
                                       @Autowired(required = false) List<PromptContextProvider> promptContextProviders) {
         ChatClient chatClient = chatClientBuilder.build();
         List<PromptContextProvider> providers = promptContextProviders != null ? promptContextProviders : List.of();
         Planner delegate = new DefaultReACTPlanner(chatClient, toolProvider, props, objectMapper, providers);
-        return new ZeroShotCoTPlanner(delegate);
+        return new ZeroShotCoTPlanner(delegate, strategiesProperties);
     }
 
     @Bean
@@ -70,11 +77,12 @@ public class StrategiesAutoConfiguration {
     @ConditionalOnProperty(prefix = "intent-reactor.planning", name = "strategy", havingValue = "step-back")
     public Planner stepBackPlanner(ChatClient.Builder chatClientBuilder, ToolProvider toolProvider,
                                    IntentReactorProperties props, ObjectMapper objectMapper,
+                                   StrategiesProperties strategiesProperties,
                                    @Autowired(required = false) List<PromptContextProvider> promptContextProviders) {
         ChatClient chatClient = chatClientBuilder.build();
         List<PromptContextProvider> providers = promptContextProviders != null ? promptContextProviders : List.of();
         Planner delegate = new DefaultReACTPlanner(chatClient, toolProvider, props, objectMapper, providers);
-        return new StepBackPlanner(delegate, chatClient, props, objectMapper);
+        return new StepBackPlanner(delegate, chatClient, strategiesProperties);
     }
 
     @Bean
@@ -172,9 +180,13 @@ public class StrategiesAutoConfiguration {
     @ConditionalOnMissingBean(Planner.class)
     @ConditionalOnProperty(prefix = "intent-reactor.planning", name = "strategy", havingValue = "map")
     public Planner mapPlanner(ChatClient.Builder chatClientBuilder, ToolProvider toolProvider,
-                              ObjectMapper objectMapper, StrategiesProperties strategiesProperties) {
+                              IntentReactorProperties props, ObjectMapper objectMapper,
+                              StrategiesProperties strategiesProperties,
+                              @Autowired(required = false) List<PromptContextProvider> promptContextProviders) {
         ChatClient chatClient = chatClientBuilder.build();
-        return new MAPPlanner(chatClient, toolProvider, objectMapper, strategiesProperties);
+        List<PromptContextProvider> providers = promptContextProviders != null ? promptContextProviders : List.of();
+        Planner delegate = new DefaultReACTPlanner(chatClient, toolProvider, props, objectMapper, providers);
+        return new MAPPlanner(chatClient, toolProvider, objectMapper, strategiesProperties, delegate, new PromptLoader());
     }
 
     @Bean

@@ -51,7 +51,7 @@ intent-reactor:
 <dependency>
     <groupId>com.intentreactor</groupId>
     <artifactId>intent-reactor-strategies</artifactId>
-    <version>0.1.13</version>
+    <version>0.1.14</version>
 </dependency>
 ```
 

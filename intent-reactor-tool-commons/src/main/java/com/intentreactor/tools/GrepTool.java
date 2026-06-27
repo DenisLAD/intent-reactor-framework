@@ -22,6 +22,10 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.stream.Stream;
 
+/**
+ * Searches file contents with a regular expression; supports an optional {@code include} glob
+ * to limit the search scope. Returns up to 100 matches with file path and line number.
+ */
 @Component
 public class GrepTool implements Tool {
 

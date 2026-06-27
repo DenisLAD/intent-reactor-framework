@@ -52,6 +52,11 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+/**
+ * Spring Boot auto-configuration that wires the core IntentReactor beans: service, planners
+ * (react/reflexion/lats), preprocessor, session store, tool provider, confirmation manager,
+ * event logger, and optional Micrometer decorator.
+ */
 @AutoConfiguration
 @EnableConfigurationProperties(IntentReactorProperties.class)
 public class IntentReactorAutoConfiguration {

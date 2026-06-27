@@ -38,11 +38,12 @@ LLM генерирует `candidates-per-step` кандидатов следую
 
 | Атрибут | Описание |
 |---|---|
-| `retreval_tree` | `RetrevalTree` — полное дерево рассуждений |
-| `retreval_memory` | `List<RetrevalPattern>` — успешные паттерны, накопленные за сессию |
-| `retreval_phase` | Текущая фаза: `INITIAL` / `EXPAND` / `VALIDATE` / `EXECUTE` / `BACKTRACK` / `SYNTHESIZE` |
-| `retreval_candidates` | Кандидаты, проходящие валидацию в текущей фазе VALIDATE |
-| `retreval_validate_idx` | Индекс кандидата, проходящего оценку |
+| `retreval_tree` | `RetrevalTree` — полное дерево рассуждений (JSON) |
+| `retreval_phase` | Текущая фаза: `EXPAND` / `SYNTHESIZE` |
+| `retreval_frontier` | `List<String>` — ID узлов, готовых к следующему расширению (beam) |
+| `retreval_cur_node` | ID узла, вызов инструмента которого выполняется (сбрасывается после получения результата) |
+| `retreval_patterns` | JSON-список `List<RetrevalPattern>` — накопленные паттерны успехов и неудач |
+| `retreval_backtrack` | Строка `[BACKTRACK: type] описание`, инжектируемая в следующий промпт EXPAND |
 
 ---
 
@@ -56,11 +57,16 @@ intent-reactor:
       retreval:
         max-tree-depth: 4         # лимит глубины дерева до принудительного SYNTHESIZE
         candidates-per-step: 3    # кандидатов, генерируемых на фазе EXPAND
-        validation-threshold: 0.6 # минимальная оценка для принятия кандидата
+        validation-threshold: 0.6 # минимальная оценка (среднее self+critic) для VALIDATED
+        beam-width: 2             # максимальный размер frontier (параллельные ветки)
+        final-threshold: 0.75     # порог оценки для немедленной пометки узла DONE
+        use-external-critic: true # оценивать каждого кандидата вторым промптом-критиком
+        memory-enabled: true      # накапливать паттерны успехов/неудач между шагами
+        max-memories: 10          # максимум паттернов в retreval_patterns
     max-steps: 40
 ```
 
-Порог короткого замыкания (0.8) фиксирован в коде. Увеличьте `max-steps` для глубоких деревьев: каждый узел требует минимум 2 вызова LLM (expand + validate).
+При `use-external-critic: false` используется только самооценка. Увеличьте `max-steps` для глубоких деревьев: каждый узел требует минимум 2 вызова LLM (expand + оценка).
 
 ---
 

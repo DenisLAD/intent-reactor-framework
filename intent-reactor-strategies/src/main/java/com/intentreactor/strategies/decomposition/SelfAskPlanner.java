@@ -3,6 +3,7 @@ package com.intentreactor.strategies.decomposition;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.intentreactor.api.Action;
+import com.intentreactor.api.Intent;
 import com.intentreactor.api.IntentAnalysisResult;
 import com.intentreactor.api.Message;
 import com.intentreactor.api.Plan;
@@ -14,6 +15,7 @@ import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.StepType;
 import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
+import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,11 +34,7 @@ import java.util.Map;
  * Self-Ask planner: decomposes the goal into sub-questions, answers each one (using tools where
  * needed), then synthesizes all answers into the final response.
  * <p>
- * Phases stored in session.attributes:
- * sa_phase       : DECOMPOSE | ANSWER | SYNTHESIZE
- * sa_questions   : List<Map> [{question, requires_tool}]
- * sa_answers     : Map<Integer, String>
- * sa_q_index     : int (current question index)
+ * Prompt files configured via intent-reactor.planning.strategies.prompts.*
  * <p>
  * Activate with: intent-reactor.planning.strategy: self-ask
  */
@@ -49,27 +47,14 @@ public class SelfAskPlanner implements Planner {
     private static final String ANSWERS_KEY = "sa_answers";
     private static final String INDEX_KEY = "sa_q_index";
 
-    private static final String DECOMPOSE_SYSTEM =
-            "Ты эксперт по декомпозиции задач. Проанализируй запрос и определи, " +
-                    "нужны ли вспомогательные вопросы для его решения. " +
-                    "Верни JSON-массив вспомогательных вопросов. " +
-                    "Если вопрос прост и не требует декомпозиции — верни пустой массив [].\n\n" +
-                    "Формат ответа:\n" +
-                    "[\n" +
-                    "  {\"question\": \"...\", \"requires_tool\": true}\n" +
-                    "]\n\n" +
-                    "requires_tool: true — если для ответа нужен инструмент (погода, время, данные); " +
-                    "false — если можно ответить рассуждением.";
-
-    private static final String SYNTHESIZE_SYSTEM =
-            "Ты помощник. Используй собранные ответы на вспомогательные вопросы, " +
-                    "чтобы дать исчерпывающий финальный ответ на исходный вопрос. " +
-                    "Синтезируй информацию в чёткий, структурированный ответ.";
-
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
     private final ObjectMapper objectMapper;
     private final int maxSubQuestions;
+    private final PromptLoader promptLoader = new PromptLoader();
+    private final String decomposePromptPath;
+    private final String synthesizePromptPath;
+    private final StrategiesProperties.LabelsConfig labels;
 
     public SelfAskPlanner(ChatClient chatClient, ToolProvider toolProvider,
                           ObjectMapper objectMapper, StrategiesProperties props) {
@@ -77,12 +62,15 @@ public class SelfAskPlanner implements Planner {
         this.toolProvider = toolProvider;
         this.objectMapper = objectMapper;
         this.maxSubQuestions = props.getSelfAsk().getMaxSubQuestions();
+        this.decomposePromptPath = props.getPrompts().getSelfAskDecompose();
+        this.synthesizePromptPath = props.getPrompts().getSelfAskSynthesize();
+        this.labels = props.getLabels();
     }
 
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "DECOMPOSE");
-        String goal = getGoal(session, intent);
+        String goal = getGoal(intent);
 
         return switch (phase) {
             case "DECOMPOSE" -> decompose(session, goal);
@@ -95,9 +83,11 @@ public class SelfAskPlanner implements Planner {
     @SuppressWarnings("unchecked")
     private Plan decompose(SessionState session, String goal) {
         try {
+            String system = promptLoader.load(decomposePromptPath,
+                    Map.of("max_questions", maxSubQuestions));
             String response = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(DECOMPOSE_SYSTEM),
-                    new UserMessage("Задача: " + goal)
+                    new SystemMessage(system),
+                    new UserMessage(labels.getTask() + goal)
             ))).call().content();
 
             List<Map<String, Object>> questions = parseQuestions(response);
@@ -135,7 +125,6 @@ public class SelfAskPlanner implements Planner {
                 (Map<String, String>) session.getAttributes().get(ANSWERS_KEY);
         int index = (int) session.getAttributes().getOrDefault(INDEX_KEY, 0);
 
-        // Check if last OBSERVE added an answer
         if (intent != null && index > 0) {
             List<Message> messages = session.getMessages();
             if (!messages.isEmpty()) {
@@ -158,7 +147,7 @@ public class SelfAskPlanner implements Planner {
         boolean requiresTool = Boolean.TRUE.equals(q.get("requires_tool"));
 
         session.getAttributes().put(INDEX_KEY, index + 1);
-        session.addMessage(Message.system("[SUB-QUESTION " + (index + 1) + "] " + question));
+        session.addMessage(Message.system(labels.getSubQuestion() + (index + 1) + "] " + question));
 
         if (requiresTool) {
             List<Tool> tools = toolProvider.getAvailableTools(session);
@@ -169,7 +158,6 @@ public class SelfAskPlanner implements Planner {
             }
         }
 
-        // Answer by reasoning
         return new SimplePlan(List.of(new SimplePlanStep(StepType.REASON, null, "Sub-question: " + question, false)));
     }
 
@@ -182,11 +170,13 @@ public class SelfAskPlanner implements Planner {
         answers.forEach((k, v) -> context.append(k).append(": ").append(v).append("\n"));
 
         try {
-            String userMsg = "Исходный вопрос: " + goal + "\n\nСобранные ответы:\n" + context +
-                    "\n\nДай финальный ответ на исходный вопрос.";
+            String synthesizeSystem = promptLoader.load(synthesizePromptPath, Map.of());
+            String userMsg = labels.getOriginalQuestion() + goal +
+                    labels.getCollectedAnswers() + context +
+                    labels.getGiveFinalAnswer();
 
             String finalAnswer = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(SYNTHESIZE_SYSTEM),
+                    new SystemMessage(synthesizeSystem),
                     new UserMessage(userMsg)
             ))).call().content();
 
@@ -194,7 +184,7 @@ public class SelfAskPlanner implements Planner {
 
         } catch (Exception e) {
             return new SimplePlan(List.of(SimplePlanStep.done(
-                    "Собранные ответы: " + context)));
+                    labels.getCollectedAnswers() + context)));
         }
     }
 
@@ -202,7 +192,6 @@ public class SelfAskPlanner implements Planner {
     private List<Map<String, Object>> parseQuestions(String response) {
         try {
             String cleaned = stripMarkdownFences(response.strip());
-            // Find the JSON array
             int start = cleaned.indexOf('[');
             int end = cleaned.lastIndexOf(']');
             if (start >= 0 && end > start) {
@@ -225,15 +214,9 @@ public class SelfAskPlanner implements Planner {
         return s.strip();
     }
 
-    private String getGoal(SessionState session, IntentAnalysisResult intent) {
-        if (session.getPlanState() != null) {
-            String g = session.getPlanState().getGoalDescription();
-            if (g != null && !g.isBlank()) return g;
-        }
-        if (intent != null && intent.getReasoningSuggestion() != null
-                && !intent.getReasoningSuggestion().isBlank()) {
-            return intent.getReasoningSuggestion();
-        }
-        return "unknown";
+    private String getGoal(IntentAnalysisResult intent) {
+        if (intent == null || intent.getIntents().isEmpty()) return "unknown";
+        Intent first = intent.getIntents().get(0);
+        return first.getName();
     }
 }

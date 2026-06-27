@@ -11,6 +11,10 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
+/**
+ * In-memory {@link ScriptRepository} backed by a {@link java.util.concurrent.ConcurrentHashMap}.
+ * Scripts are lost on application restart.
+ */
 public class InMemoryScriptRepository implements ScriptRepository {
 
     private final ConcurrentHashMap<String, ScriptDefinition> store = new ConcurrentHashMap<>();

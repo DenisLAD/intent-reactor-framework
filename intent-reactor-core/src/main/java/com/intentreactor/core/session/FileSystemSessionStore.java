@@ -17,6 +17,10 @@ import java.nio.file.StandardCopyOption;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Persistent {@link SessionStore} that serialises each session as a JSON file under the configured
+ * directory. Writes are atomic (write to temp file then rename) to prevent corruption on crash.
+ */
 public class FileSystemSessionStore implements SessionStore {
 
     private static final Logger log = LoggerFactory.getLogger(FileSystemSessionStore.class);

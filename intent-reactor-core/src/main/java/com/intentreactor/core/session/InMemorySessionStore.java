@@ -6,6 +6,10 @@ import com.intentreactor.api.SessionStore;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Thread-safe in-memory {@link SessionStore} backed by a {@link java.util.concurrent.ConcurrentHashMap}.
+ * Sessions are lost on application restart.
+ */
 public class InMemorySessionStore implements SessionStore {
 
     private final ConcurrentHashMap<String, SessionState> store = new ConcurrentHashMap<>();

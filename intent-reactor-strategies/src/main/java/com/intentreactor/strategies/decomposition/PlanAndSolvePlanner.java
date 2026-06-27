@@ -13,6 +13,7 @@ import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.StepType;
 import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
+import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,15 +25,13 @@ import org.springframework.ai.chat.prompt.Prompt;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Plan-and-Solve planner: generates a complete step-by-step plan in a single LLM call,
- * then executes each step sequentially. Unlike ReACT, the plan is fixed upfront.
+ * then executes each step sequentially.
  * <p>
- * Phases stored in session.attributes:
- * pas_phase  : PLANNING | EXECUTING
- * pas_plan   : List<Map> [{toolName, parameters, description}]
- * pas_step   : int
+ * Prompt file configured via intent-reactor.planning.strategies.prompts.plan-and-solve-plan
  * <p>
  * Activate with: intent-reactor.planning.strategy: plan-and-solve
  */
@@ -44,24 +43,13 @@ public class PlanAndSolvePlanner implements Planner {
     private static final String PLAN_KEY = "pas_plan";
     private static final String STEP_KEY = "pas_step";
 
-    private static final String PLANNING_SYSTEM =
-            "Ты планировщик задач. Проанализируй задачу и составь детальный пошаговый план её выполнения.\n\n" +
-                    "Для каждого шага укажи:\n" +
-                    "- toolName: имя инструмента из списка доступных (или null для шагов-рассуждений)\n" +
-                    "- parameters: словарь параметров инструмента\n" +
-                    "- description: описание шага на русском\n\n" +
-                    "Верни JSON-массив шагов:\n" +
-                    "[\n" +
-                    "  {\"toolName\": \"weather\", \"parameters\": {\"city\": \"Москва\"}, \"description\": \"Узнать погоду в Москве\"},\n" +
-                    "  {\"toolName\": null, \"parameters\": {}, \"description\": \"Сформулировать финальный ответ\"}\n" +
-                    "]\n\n" +
-                    "Доступные инструменты:\n{tools}\n\n" +
-                    "Максимум {max} шагов. Будь конкретен и реалистичен.";
-
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
     private final ObjectMapper objectMapper;
     private final int maxPlanSteps;
+    private final PromptLoader promptLoader = new PromptLoader();
+    private final String planPromptPath;
+    private final StrategiesProperties.LabelsConfig labels;
 
     public PlanAndSolvePlanner(ChatClient chatClient, ToolProvider toolProvider,
                                ObjectMapper objectMapper, StrategiesProperties props) {
@@ -69,12 +57,14 @@ public class PlanAndSolvePlanner implements Planner {
         this.toolProvider = toolProvider;
         this.objectMapper = objectMapper;
         this.maxPlanSteps = props.getPlanAndSolve().getMaxPlanSteps();
+        this.planPromptPath = props.getPrompts().getPlanAndSolvePlan();
+        this.labels = props.getLabels();
     }
 
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "PLANNING");
-        String goal = getGoal(session, intent);
+        String goal = getGoal(intent);
 
         return switch (phase) {
             case "PLANNING" -> generatePlan(session, intent, goal);
@@ -85,17 +75,17 @@ public class PlanAndSolvePlanner implements Planner {
 
     private Plan generatePlan(SessionState session, IntentAnalysisResult intent, String goal) {
         List<Tool> tools = toolProvider.getAvailableTools(session);
-        StringBuilder toolsList = new StringBuilder();
-        tools.forEach(t -> toolsList.append("- ").append(t.getName()).append(": ").append(t.getDescription()).append("\n"));
+        String toolsList = tools.stream()
+                .map(t -> "- " + t.getName() + ": " + t.getDescription())
+                .collect(Collectors.joining("\n"));
 
-        String systemPrompt = PLANNING_SYSTEM
-                .replace("{tools}", toolsList.toString())
-                .replace("{max}", String.valueOf(maxPlanSteps));
+        String systemPrompt = promptLoader.load(planPromptPath,
+                Map.of("tools", toolsList, "max", maxPlanSteps));
 
         try {
             String response = chatClient.prompt(new Prompt(List.of(
                     new SystemMessage(systemPrompt),
-                    new UserMessage("Задача: " + goal)
+                    new UserMessage(labels.getTask() + goal)
             ))).call().content();
 
             List<Map<String, Object>> steps = parseSteps(response);
@@ -181,15 +171,8 @@ public class PlanAndSolvePlanner implements Planner {
         return s.strip();
     }
 
-    private String getGoal(SessionState session, IntentAnalysisResult intent) {
-        if (session.getPlanState() != null) {
-            String g = session.getPlanState().getGoalDescription();
-            if (g != null && !g.isBlank()) return g;
-        }
-        if (intent != null && intent.getReasoningSuggestion() != null
-                && !intent.getReasoningSuggestion().isBlank()) {
-            return intent.getReasoningSuggestion();
-        }
-        return "unknown";
+    private String getGoal(IntentAnalysisResult intent) {
+        if (intent == null || intent.getIntents().isEmpty()) return "unknown";
+        return intent.getIntents().get(0).getName();
     }
 }

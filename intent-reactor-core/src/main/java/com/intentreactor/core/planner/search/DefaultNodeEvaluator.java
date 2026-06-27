@@ -19,6 +19,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * LLM-backed {@link NodeEvaluator}: generates candidate actions via a structured prompt
+ * and scores them by executing {@link com.intentreactor.api.SimulatableTool#simulate} where available.
+ */
 public class DefaultNodeEvaluator implements NodeEvaluator {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultNodeEvaluator.class);

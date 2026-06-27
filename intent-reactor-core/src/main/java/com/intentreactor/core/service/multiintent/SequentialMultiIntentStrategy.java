@@ -16,6 +16,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * {@link com.intentreactor.api.MultiIntentStrategy} that processes detected intents
+ * one at a time in the order returned by the preprocessor.
+ */
 public class SequentialMultiIntentStrategy implements MultiIntentStrategy {
 
     private final SessionStore sessionStore;

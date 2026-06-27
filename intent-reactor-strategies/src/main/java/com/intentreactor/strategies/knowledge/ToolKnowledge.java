@@ -5,6 +5,10 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Action Knowledge Base entry for a single tool in {@link KnowAgentPlanner}:
+ * holds preconditions, postconditions, and contraindications extracted from the tool description.
+ */
 @Data
 public class ToolKnowledge {
 

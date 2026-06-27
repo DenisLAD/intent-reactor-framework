@@ -8,6 +8,10 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Persistent record of an LLM-generated ECMAScript 5.1 tool script: name, description,
+ * parameter schema, source code, status, and timestamps. Stored by {@link com.intentreactor.tools.dynamic.api.ScriptRepository}.
+ */
 @Getter
 @Setter
 public class ScriptDefinition {

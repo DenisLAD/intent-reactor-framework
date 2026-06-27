@@ -14,6 +14,10 @@ import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 
+/**
+ * JDBC-backed {@link com.intentreactor.api.SessionStore} that serialises sessions as JSON
+ * into a single configurable table. Active only when {@code intent-reactor.session.store: jdbc}.
+ */
 @Component
 @ConditionalOnProperty(prefix = "intent-reactor.session", name = "store", havingValue = "jdbc")
 @ConditionalOnClass(JdbcTemplate.class)

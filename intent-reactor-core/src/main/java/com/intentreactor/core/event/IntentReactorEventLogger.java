@@ -12,6 +12,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
 
+/**
+ * SLF4J event listener that logs all {@code IntentReactorEvent} subtypes at INFO level.
+ * Auto-registered by {@link com.intentreactor.core.config.IntentReactorAutoConfiguration};
+ * disable via {@code intent-reactor.logging.enabled: false}.
+ */
 public class IntentReactorEventLogger {
 
     private static final Logger log = LoggerFactory.getLogger(IntentReactorEventLogger.class);

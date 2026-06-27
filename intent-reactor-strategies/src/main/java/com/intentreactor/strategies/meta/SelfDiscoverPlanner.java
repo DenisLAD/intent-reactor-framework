@@ -7,6 +7,7 @@ import com.intentreactor.api.Message;
 import com.intentreactor.api.Plan;
 import com.intentreactor.api.Planner;
 import com.intentreactor.api.SessionState;
+import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,20 +17,15 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Self-Discover planner: before solving, the model selects relevant reasoning modules from a
  * curated bank, adapts them to the specific task, then executes using the structured plan.
  * <p>
- * Three phases:
- * SELECT  - choose which reasoning modules apply
- * ADAPT   - tailor the modules to this specific task
- * EXECUTE - delegate to base planner with enriched structured plan in context
+ * Prompt files configured via intent-reactor.planning.strategies.prompts.*
  * <p>
- * Stored in session.attributes:
- * sd_phase             : SELECT | ADAPT | EXECUTE
- * sd_selected_modules  : List<String>
- * sd_plan              : String (markdown structured plan)
+ * Three phases: SELECT → ADAPT → EXECUTE (delegate)
  * <p>
  * Activate with: intent-reactor.planning.strategy: self-discover
  */
@@ -41,25 +37,14 @@ public class SelfDiscoverPlanner implements Planner {
     private static final String MODULES_KEY = "sd_selected_modules";
     private static final String PLAN_KEY = "sd_plan";
 
-    private static final String SELECT_SYSTEM =
-            "Тебе дан набор модулей рассуждения. Выбери {count} наиболее подходящих для решения задачи.\n\n" +
-                    "Доступные модули:\n{modules}\n\n" +
-                    "Верни JSON-массив ТОЧНЫХ названий выбранных модулей:\n" +
-                    "[\"Думай пошагово — ...\", \"Разбей задачу — ...\"]";
-
-    private static final String ADAPT_SYSTEM =
-            "Тебе предоставлены выбранные модули рассуждения. Адаптируй их для конкретной задачи.\n\n" +
-                    "Создай структурированный план рассуждения в виде нумерованного списка шагов. " +
-                    "Каждый шаг должен быть конкретным указанием, адаптированным под задачу.\n\n" +
-                    "Пример формата:\n" +
-                    "1. [Пошаговое рассуждение] Определи входные данные задачи и что требуется на выходе.\n" +
-                    "2. [Декомпозиция] Разбей задачу на подзадачи: ...\n" +
-                    "3. [Верификация] Проверь каждый промежуточный результат на корректность.";
-
     private final Planner delegate;
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final int moduleCount;
+    private final PromptLoader promptLoader = new PromptLoader();
+    private final String selectPromptPath;
+    private final String adaptPromptPath;
+    private final StrategiesProperties.LabelsConfig labels;
 
     public SelfDiscoverPlanner(Planner delegate, ChatClient chatClient, ObjectMapper objectMapper,
                                StrategiesProperties props) {
@@ -67,12 +52,15 @@ public class SelfDiscoverPlanner implements Planner {
         this.chatClient = chatClient;
         this.objectMapper = objectMapper;
         this.moduleCount = props.getSelfDiscover().getModuleCount();
+        this.selectPromptPath = props.getPrompts().getSelfDiscoverSelect();
+        this.adaptPromptPath = props.getPrompts().getSelfDiscoverAdapt();
+        this.labels = props.getLabels();
     }
 
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "SELECT");
-        String goal = getGoal(session, intent);
+        String goal = getGoal(intent);
 
         return switch (phase) {
             case "SELECT" -> selectModules(session, goal, intent);
@@ -86,14 +74,13 @@ public class SelfDiscoverPlanner implements Planner {
         String modulesList = String.join("\n", ReasoningModuleBank.MODULES.stream()
                 .map(m -> "- " + m).toList());
 
-        String systemPrompt = SELECT_SYSTEM
-                .replace("{count}", String.valueOf(moduleCount))
-                .replace("{modules}", modulesList);
-
         try {
+            String systemPrompt = promptLoader.load(selectPromptPath,
+                    Map.of("count", moduleCount, "modules", modulesList));
+
             String response = chatClient.prompt(new Prompt(List.of(
                     new SystemMessage(systemPrompt),
-                    new UserMessage("Задача: " + goal)
+                    new UserMessage(labels.getTask() + goal)
             ))).call().content();
 
             List<String> selected = parseStringArray(response);
@@ -120,17 +107,19 @@ public class SelfDiscoverPlanner implements Planner {
         String modulesList = String.join("\n", selected.stream().map(m -> "- " + m).toList());
 
         try {
+            String systemPrompt = promptLoader.load(adaptPromptPath,
+                    Map.of("modules", modulesList));
+
             String response = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(ADAPT_SYSTEM),
-                    new UserMessage("Выбранные модули:\n" + modulesList + "\n\nЗадача: " + goal)
+                    new SystemMessage(systemPrompt),
+                    new UserMessage(labels.getTask() + goal)
             ))).call().content();
 
             String structuredPlan = response.strip();
             session.getAttributes().put(PLAN_KEY, structuredPlan);
             session.getAttributes().put(PHASE_KEY, "EXECUTE");
 
-            session.addMessage(Message.system(
-                    "[STRUCTURED REASONING PLAN]\n" + structuredPlan));
+            session.addMessage(Message.system(labels.getStructuredPlan() + structuredPlan));
 
             log.debug("[SelfDiscover] Adapted structured plan for session {}", session.getId());
             return delegate.plan(session, intent);
@@ -165,15 +154,8 @@ public class SelfDiscoverPlanner implements Planner {
         return s.strip();
     }
 
-    private String getGoal(SessionState session, IntentAnalysisResult intent) {
-        if (session.getPlanState() != null) {
-            String g = session.getPlanState().getGoalDescription();
-            if (g != null && !g.isBlank()) return g;
-        }
-        if (intent != null && intent.getReasoningSuggestion() != null
-                && !intent.getReasoningSuggestion().isBlank()) {
-            return intent.getReasoningSuggestion();
-        }
-        return "unknown";
+    private String getGoal(IntentAnalysisResult intent) {
+        if (intent == null || intent.getIntents().isEmpty()) return "unknown";
+        return intent.getIntents().get(0).getName();
     }
 }

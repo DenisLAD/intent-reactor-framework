@@ -13,6 +13,11 @@ import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 
+/**
+ * JPA-backed {@link com.intentreactor.api.SessionStore} that persists sessions via
+ * {@link SessionEntityRepository}. Active only when {@code intent-reactor.session.store: jpa}.
+ * Note: incompatible with the LATS strategy — the embedded ObjectMapper lacks search-tree mappings.
+ */
 @Component
 @ConditionalOnProperty(prefix = "intent-reactor.session", name = "store", havingValue = "jpa")
 @ConditionalOnClass(JpaRepository.class)

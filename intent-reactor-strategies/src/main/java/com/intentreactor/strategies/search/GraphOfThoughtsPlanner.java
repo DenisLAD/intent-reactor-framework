@@ -8,6 +8,7 @@ import com.intentreactor.api.SessionState;
 import com.intentreactor.api.SimplePlan;
 import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.StepType;
+import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,14 +27,7 @@ import java.util.stream.Collectors;
  * At each step, the LLM selects an operation (GENERATE, AGGREGATE, REFINE, SCORE)
  * to evolve the graph. More flexible than ToT as it supports merging and refining thoughts.
  * <p>
- * Operations:
- * GENERATE  - add a new thought as a child of an existing node
- * AGGREGATE - merge multiple nodes into a new synthesis node
- * REFINE    - update the content of an existing node
- * SCORE     - assign a quality score to a node
- * <p>
- * Stored in session.attributes:
- * got_graph : ThoughtGraph
+ * Prompt file configured via intent-reactor.planning.strategies.prompts.got-generate
  * <p>
  * Activate with: intent-reactor.planning.strategy: got
  */
@@ -42,28 +36,13 @@ public class GraphOfThoughtsPlanner implements Planner {
     private static final Logger log = LoggerFactory.getLogger(GraphOfThoughtsPlanner.class);
     private static final String GRAPH_KEY = "got_graph";
 
-    private static final String OPERATION_SYSTEM =
-            "Ты управляешь графом мыслей для решения задачи. " +
-                    "Выбери следующую операцию для развития графа:\n\n" +
-                    "- GENERATE: создай новую мысль как дочернюю к существующей\n" +
-                    "- AGGREGATE: объедини несколько мыслей в одну синтезирующую\n" +
-                    "- REFINE: уточни или улучши существующую мысль\n" +
-                    "- SCORE: оцени качество мысли (от 0.0 до 1.0)\n\n" +
-                    "Верни JSON:\n" +
-                    "{\n" +
-                    "  \"operation\": \"GENERATE\",\n" +
-                    "  \"source_ids\": [\"id1\"],\n" +
-                    "  \"content\": \"Новая мысль или уточнение\",\n" +
-                    "  \"score\": null,\n" +
-                    "  \"done\": false,\n" +
-                    "  \"final_answer\": null\n" +
-                    "}\n\n" +
-                    "done: true если найден финальный ответ. final_answer: текст ответа если done=true.";
-
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final int maxOperations;
     private final double aggregationThreshold;
+    private final PromptLoader promptLoader = new PromptLoader();
+    private final String generatePromptPath;
+    private final StrategiesProperties.LabelsConfig labels;
 
     public GraphOfThoughtsPlanner(ChatClient chatClient, ObjectMapper objectMapper,
                                   StrategiesProperties props) {
@@ -71,6 +50,8 @@ public class GraphOfThoughtsPlanner implements Planner {
         this.objectMapper = objectMapper;
         this.maxOperations = props.getGot().getMaxOperations();
         this.aggregationThreshold = props.getGot().getAggregationThreshold();
+        this.generatePromptPath = props.getPrompts().getGotGenerate();
+        this.labels = props.getLabels();
     }
 
     @Override
@@ -80,19 +61,19 @@ public class GraphOfThoughtsPlanner implements Planner {
 
         if (graph.getOperationCount() >= maxOperations) {
             Optional<ThoughtNode> best = graph.bestNode();
-            String answer = best.map(ThoughtNode::getContent).orElse("No solution found.");
+            String answer = best.map(ThoughtNode::getContent).orElse(labels.getNoSolution());
             return new SimplePlan(List.of(SimplePlanStep.done(answer)));
         }
 
-        // Build graph summary for LLM
         String graphSummary = buildGraphSummary(graph);
 
         try {
-            String userMsg = "Задача: " + goal + "\n\nТекущий граф мыслей:\n" + graphSummary +
-                    "\n\nВыбери следующую операцию.";
+            String system = promptLoader.load(generatePromptPath, Map.of());
+            String userMsg = labels.getTask() + goal + labels.getCurrentGraph() + graphSummary
+                    + labels.getChooseNextOperation();
 
             String response = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(OPERATION_SYSTEM),
+                    new SystemMessage(system),
                     new UserMessage(userMsg)
             ))).call().content();
 
@@ -107,13 +88,12 @@ public class GraphOfThoughtsPlanner implements Planner {
             applyOperation(graph, op);
             saveGraph(session, graph);
 
-            // Check if best node exceeds aggregation threshold
             Optional<ThoughtNode> best = graph.bestNode();
             if (best.isPresent() && best.get().getScore() >= aggregationThreshold) {
                 return new SimplePlan(List.of(SimplePlanStep.done(best.get().getContent())));
             }
 
-            String reasoning = op.content != null ? op.content : "Exploring graph...";
+            String reasoning = op.content != null ? op.content : labels.getContinueExpansion();
             log.debug("[GoT] Operation {} applied, total ops={} for session {}", op.operation,
                     graph.getOperationCount(), session.getId());
 
@@ -179,7 +159,7 @@ public class GraphOfThoughtsPlanner implements Planner {
         } catch (Exception e) {
             OperationResult r = new OperationResult();
             r.operation = "GENERATE";
-            r.content = "Exploring...";
+            r.content = labels.getContinueExpansion();
             return r;
         }
     }

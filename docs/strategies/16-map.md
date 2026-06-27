@@ -13,20 +13,18 @@ MAP (Modular Agentic Planner) orchestrates five specialised LLM cognitive module
 
 ## How It Works
 
-**Module 1 — TaskDecomposer** *(once, on first call)*
-Decomposes the overall goal into an ordered list of atomic subtasks. Each subtask is a concrete, tool-addressable step.
+**Phase 1 — PLAN** *(one call, before any tool execution)*
+Four LLM modules run in sequence to produce a high-confidence subgoal plan:
 
-**Module 2 — TaskCoordinator** *(every step)*
-Given the current subtask, available tools, and recent observations, decides the next action: which tool to call (or a REASON step), and what parameters to use.
+1. **TaskDecomposer** — decomposes the overall goal into up to `max-subtasks` ordered subtasks. Each subtask is a concrete, tool-addressable step with optional dependency references.
+2. **StatePredictor** *(if `use-state-predictor: true`)* — for each subtask, predicts the expected intermediate state and injects predictions as SYSTEM messages.
+3. **Evaluator** — scores the proposed plan from 0.0 to 1.0. If the score meets `confidence-threshold` and there are no conflicts, the plan is accepted.
+4. **ConflictMonitor** *(if `use-conflict-monitor: true`)* — checks whether the subtasks have resource or ordering conflicts. If a conflict is found, its description is injected back into the next TaskDecomposer call.
 
-**Module 3 — Evaluator** *(every `eval-interval-steps` steps)*
-Scores overall progress from 0.0 to 1.0. When the score exceeds `progress-threshold`, the planner moves to synthesis. This prevents unnecessary extra steps after the goal is effectively reached.
+Steps 2–4 repeat up to `max-planning-iterations` times. Once accepted, the final plan is injected as a pinned user message into the session.
 
-**Module 4 — ConflictMonitor** *(on tool errors, if `use-conflict-monitor: true`)*
-When a tool call fails, the ConflictMonitor identifies whether the failure is a contradiction (e.g., conflicting state assumptions), a missing precondition, or a transient error. The diagnosis is injected into the next TaskCoordinator call.
-
-**Module 5 — StatePredictor** *(every step, if `use-state-predictor: true`)*
-Before executing an action, predicts the expected outcome. This prediction is compared with the actual observation and the delta is fed back to the TaskCoordinator. Disabled by default due to added LLM call overhead.
+**Phase 2 — EXECUTE**
+All subsequent `plan()` calls are fully delegated to the underlying `DefaultReACTPlanner`, which executes the subgoal list step by step. MAP itself does no further coordination during execution.
 
 ---
 
@@ -34,12 +32,9 @@ Before executing an action, predicts the expected outcome. This prediction is co
 
 | Attribute | Description |
 |---|---|
-| `map_phase` | Current phase: `DECOMPOSE` / `COORDINATE` / `SYNTHESIZE` |
-| `map_subtasks` | `List<String>` — decomposed subtask list |
-| `map_subtask_index` | Index of the current active subtask |
-| `map_eval_score` | Latest Evaluator score (0.0–1.0) |
-| `map_eval_step_count` | Steps since last Evaluator run |
-| `map_conflict_context` | ConflictMonitor diagnosis from the last error |
+| `map_phase` | Current phase: `PLAN` / `EXECUTE` |
+
+All module state (subgoal list, evaluation scores, conflict context) is local to a single `plan()` call. Once the PLAN phase completes, the final subgoal plan is injected as a pinned user message and the session moves to EXECUTE, delegating all subsequent calls to the underlying ReACT planner.
 
 ---
 
@@ -51,11 +46,11 @@ intent-reactor:
     strategy: map
     strategies:
       map:
-        max-subtasks: 5           # maximum subtasks from TaskDecomposer
-        progress-threshold: 0.8   # Evaluator score to consider goal done
-        use-conflict-monitor: true # activate ConflictMonitor on errors
-        use-state-predictor: false # activate StatePredictor (extra LLM call/step)
-        eval-interval-steps: 3    # run Evaluator every N steps
+        max-subtasks: 5              # maximum subtasks from TaskDecomposer
+        max-planning-iterations: 3   # refinement iterations (decompose → evaluate → monitor)
+        confidence-threshold: 0.7    # Evaluator score required to accept the plan
+        use-conflict-monitor: true   # run ConflictMonitor after each evaluation
+        use-state-predictor: false   # run StatePredictor per subgoal (extra LLM call)
     max-steps: 50
 ```
 

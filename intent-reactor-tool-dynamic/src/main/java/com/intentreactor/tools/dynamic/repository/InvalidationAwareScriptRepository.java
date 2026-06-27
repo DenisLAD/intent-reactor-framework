@@ -7,6 +7,10 @@ import com.intentreactor.tools.dynamic.tool.DynamicToolProvider;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * {@link ScriptRepository} decorator that invalidates the {@link com.intentreactor.tools.dynamic.tool.DynamicToolProvider}
+ * cache on every {@code save()} or {@code archive()} call, avoiding a circular constructor dependency.
+ */
 public class InvalidationAwareScriptRepository implements ScriptRepository {
 
     private final ScriptRepository delegate;

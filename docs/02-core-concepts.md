@@ -112,7 +112,7 @@ public interface Planner {
 | `DONE` | Terminal success; `description` becomes `finalText` |
 | `FAIL` | Terminal failure; `description` becomes the error message |
 
-To use a custom planner, declare it as a `@Primary` bean or set `intent-reactor.planning.strategy` to one of the 14 built-in values.
+To use a custom planner, declare it as a `@Primary` bean or set `intent-reactor.planning.strategy` to one of the 18 built-in values.
 
 ---
 

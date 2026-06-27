@@ -14,6 +14,10 @@ import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Creates or overwrites a file at the given path, creating all necessary parent directories.
+ * Marked {@code isRisky = true} so autonomous execution requires confirmation.
+ */
 @Component
 public class WriteFileTool implements Tool {
 

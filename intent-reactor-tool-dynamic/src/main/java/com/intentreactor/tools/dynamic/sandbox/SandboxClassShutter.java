@@ -5,6 +5,11 @@ import org.mozilla.javascript.ClassShutter;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * Rhino {@link ClassShutter} that blocks access to dangerous Java packages ({@code java.io},
+ * {@code java.net}, {@code java.lang.System}, {@code Runtime}, {@code Thread}, reflection, etc.)
+ * while allowing safe utility classes and an optional user-supplied allowlist.
+ */
 public class SandboxClassShutter implements ClassShutter {
 
     private static final Set<String> ALWAYS_DENIED_PREFIXES_SET = Set.of(
@@ -54,7 +59,6 @@ public class SandboxClassShutter implements ClassShutter {
         if (ALWAYS_DENIED_EXACT.contains(fullClassName)) return false;
         if (ALWAYS_ALLOWED.contains(fullClassName)) return true;
         if (extraAllowedClasses.contains(fullClassName)) return true;
-        if (fullClassName.startsWith("org.mozilla.javascript.")) return true;
-        return false;
+        return fullClassName.startsWith("org.mozilla.javascript.");
     }
 }

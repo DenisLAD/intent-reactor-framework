@@ -11,6 +11,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Node in the MCTS search tree used by {@link com.intentreactor.core.planner.LATSPlanner}.
+ * Tracks visit count, cumulative reward, parent/child links, and the action that led to this node.
+ */
 @Getter
 @Setter
 public class SearchNode {

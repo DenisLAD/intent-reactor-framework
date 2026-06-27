@@ -6,6 +6,10 @@ import com.intentreactor.api.Action;
 
 import java.util.List;
 
+/**
+ * Serialisable MCTS tree used by {@link com.intentreactor.core.planner.LATSPlanner}
+ * to persist the search state across {@code plan()} calls in {@code session.attributes}.
+ */
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "@type")
 @JsonSubTypes(@JsonSubTypes.Type(value = DefaultSearchTree.class, name = "default"))
 public interface SearchTree {

@@ -18,6 +18,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * JDBC-backed {@link ScriptRepository} persisting scripts in the {@code intent_reactor_scripts} table.
+ * Uses upsert semantics (UPDATE then INSERT) and serializes {@code parameterSchema} / {@code tags} as JSON columns.
+ */
 public class JdbcScriptRepository implements ScriptRepository {
 
     private static final Logger log = LoggerFactory.getLogger(JdbcScriptRepository.class);

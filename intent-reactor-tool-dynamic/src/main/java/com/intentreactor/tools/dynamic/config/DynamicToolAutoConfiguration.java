@@ -26,6 +26,12 @@ import org.springframework.context.annotation.Bean;
 
 import java.util.List;
 
+/**
+ * Spring Boot auto-configuration for the dynamic scripting subsystem.
+ * Registers {@link com.intentreactor.tools.dynamic.tool.DynamicScriptTool},
+ * {@link com.intentreactor.tools.dynamic.tool.DynamicToolProvider}, and a {@link ScriptRepository}
+ * (in-memory or JDBC). Active only when {@code dynamic-scripting.enabled: true} and Rhino is on the classpath.
+ */
 @AutoConfiguration
 @AutoConfigureBefore(IntentReactorAutoConfiguration.class)
 @ConditionalOnProperty(

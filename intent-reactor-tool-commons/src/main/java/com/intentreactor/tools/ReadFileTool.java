@@ -19,6 +19,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
+/**
+ * Reads a file with line numbers and optional {@code offset}/{@code limit} parameters;
+ * lists directory contents when the path points to a directory; detects binary files.
+ */
 @Component
 public class ReadFileTool implements Tool {
 

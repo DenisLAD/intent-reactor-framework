@@ -9,6 +9,7 @@ import com.intentreactor.api.SessionState;
 import com.intentreactor.api.SimplePlan;
 import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.StepType;
+import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,8 +29,10 @@ import java.util.stream.Collectors;
  * BFS, DFS, or beam search. At each step, generates multiple thought candidates and evaluates
  * each via LLM before selecting the best to continue.
  * <p>
+ * Prompt files configured via intent-reactor.planning.strategies.prompts.*
+ * <p>
  * Stored in session.attributes:
- * tot_tree     : ThoughtGraph (serialized as JSON)
+ * tot_tree : ThoughtGraph (serialized as JSON)
  * <p>
  * Activate with: intent-reactor.planning.strategy: tot
  */
@@ -38,31 +41,16 @@ public class TreeOfThoughtsPlanner implements Planner {
     private static final Logger log = LoggerFactory.getLogger(TreeOfThoughtsPlanner.class);
     private static final String TREE_KEY = "tot_tree";
 
-    private static final String GENERATE_SYSTEM =
-            "Ты генератор мыслей. Получив текущее рассуждение, предложи {count} различных " +
-                    "продолжений (следующих шагов мышления). Каждое продолжение должно быть отдельной " +
-                    "и осмысленной мыслью, ведущей к решению задачи.\n\n" +
-                    "Верни JSON-массив строк:\n" +
-                    "[\"Мысль 1\", \"Мысль 2\", \"Мысль 3\"]";
-
-    private static final String EVALUATE_SYSTEM =
-            "Ты оценщик качества рассуждения. Оцени, насколько данная мысль продвигает " +
-                    "к решению задачи. Учитывай корректность, полезность и оригинальность.\n\n" +
-                    "Верни JSON:\n" +
-                    "{\n" +
-                    "  \"score\": 0.85,\n" +
-                    "  \"done\": false,\n" +
-                    "  \"final_answer\": null\n" +
-                    "}\n\n" +
-                    "done: true если эта мысль является готовым ответом на задачу.\n" +
-                    "final_answer: финальный ответ если done=true, иначе null.";
-
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final String searchAlgorithm;
     private final int beamWidth;
     private final int thoughtsPerStep;
     private final int maxDepth;
+    private final PromptLoader promptLoader = new PromptLoader();
+    private final String generatePromptPath;
+    private final String evaluatePromptPath;
+    private final StrategiesProperties.LabelsConfig labels;
 
     public TreeOfThoughtsPlanner(ChatClient chatClient, ObjectMapper objectMapper,
                                  StrategiesProperties props) {
@@ -73,6 +61,9 @@ public class TreeOfThoughtsPlanner implements Planner {
         this.beamWidth = cfg.getBeamWidth();
         this.thoughtsPerStep = cfg.getThoughtsPerStep();
         this.maxDepth = cfg.getMaxDepth();
+        this.generatePromptPath = props.getPrompts().getTotGenerate();
+        this.evaluatePromptPath = props.getPrompts().getTotEvaluate();
+        this.labels = props.getLabels();
     }
 
     @Override
@@ -80,20 +71,17 @@ public class TreeOfThoughtsPlanner implements Planner {
         String goal = getGoal(intent);
         ThoughtGraph tree = loadOrCreateTree(session, goal);
 
-        // Select frontier nodes to expand
         List<ThoughtNode> frontier = selectFrontier(tree);
         if (frontier.isEmpty()) {
             ThoughtNode best = tree.bestNode().orElse(null);
-            String answer = best != null ? best.getContent() : "No solution found.";
+            String answer = best != null ? best.getContent() : labels.getNoSolution();
             return new SimplePlan(List.of(SimplePlanStep.done(answer)));
         }
 
         ThoughtNode current = frontier.get(0);
 
-        // Generate thoughts
         List<String> newThoughts = generateThoughts(current.getContent(), goal);
 
-        // Evaluate each thought
         double bestScore = -1;
         ThoughtNode bestNode = null;
 
@@ -121,7 +109,7 @@ public class TreeOfThoughtsPlanner implements Planner {
             return new SimplePlan(List.of(SimplePlanStep.done(bestNode.getContent())));
         }
 
-        String reasoning = bestNode != null ? bestNode.getContent() : "Continuing exploration...";
+        String reasoning = bestNode != null ? bestNode.getContent() : labels.getContinueExpansion();
         log.debug("[ToT] Best thought score={} depth={} for session {}", bestScore,
                 bestNode != null ? bestNode.getDepth() : 0, session.getId());
 
@@ -151,9 +139,9 @@ public class TreeOfThoughtsPlanner implements Planner {
 
     private List<String> generateThoughts(String currentThought, String goal) {
         try {
-            String system = GENERATE_SYSTEM.replace("{count}", String.valueOf(thoughtsPerStep));
-            String userMsg = "Задача: " + goal + "\n\nТекущее рассуждение: " + currentThought +
-                    "\n\nПредложи " + thoughtsPerStep + " продолжений.";
+            String system = promptLoader.load(generatePromptPath,
+                    Map.of("count", thoughtsPerStep));
+            String userMsg = labels.getTask() + goal + labels.getCurrentReasoning() + currentThought;
 
             String response = chatClient.prompt(new Prompt(List.of(
                     new SystemMessage(system),
@@ -163,15 +151,17 @@ public class TreeOfThoughtsPlanner implements Planner {
             return parseStringArray(response);
         } catch (Exception e) {
             log.warn("[ToT] Thought generation failed: {}", e.getMessage());
-            return List.of("Continue exploring: " + currentThought);
+            return List.of(labels.getContinueExpansion() + " " + currentThought);
         }
     }
 
     private EvalResult evaluateThought(String thought, String goal) {
         try {
-            String userMsg = "Задача: " + goal + "\n\nМысль для оценки: " + thought;
+            String system = promptLoader.load(evaluatePromptPath, Map.of());
+            String userMsg = labels.getTask() + goal + labels.getThoughtToEvaluate() + thought;
+
             String response = chatClient.prompt(new Prompt(List.of(
-                    new SystemMessage(EVALUATE_SYSTEM),
+                    new SystemMessage(system),
                     new UserMessage(userMsg)
             ))).call().content();
 

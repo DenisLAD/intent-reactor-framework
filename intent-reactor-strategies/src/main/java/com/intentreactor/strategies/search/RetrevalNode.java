@@ -8,6 +8,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Node in the ReTreVal reasoning tree: holds the reasoning step content, self and critic
+ * validation scores, backtracking state, and links to parent and child nodes.
+ */
 @Data
 public class RetrevalNode {
 

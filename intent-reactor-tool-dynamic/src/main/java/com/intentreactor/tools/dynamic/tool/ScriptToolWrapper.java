@@ -9,6 +9,11 @@ import org.mozilla.javascript.Script;
 
 import java.util.Map;
 
+/**
+ * Adapts a {@link ScriptDefinition} into a callable {@link com.intentreactor.api.Tool} by
+ * pre-compiling the ECMAScript 5.1 source via the Rhino sandbox at construction time and
+ * delegating {@link #execute} to {@link RhinoSandbox#execute}.
+ */
 public class ScriptToolWrapper implements DynamicTool {
 
     private final ScriptDefinition definition;

@@ -22,6 +22,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+/**
+ * {@link com.intentreactor.api.MultiIntentStrategy} that executes independent intents
+ * concurrently via {@link java.util.concurrent.CompletableFuture}, bounded by
+ * {@code planning.parallel-timeout}.
+ */
 public class ParallelMultiIntentStrategy implements MultiIntentStrategy {
 
     private static final Logger log = LoggerFactory.getLogger(ParallelMultiIntentStrategy.class);
