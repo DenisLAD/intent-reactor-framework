@@ -14,5 +14,11 @@ Return JSON:
   "final_answer": null
 }
 
-done: true if this thought is the final answer to the problem.
-final_answer: the complete answer if done=true, otherwise null.
+STRICT RULE for done: done=true ONLY if this thought is a COMPLETE and SELF-CONTAINED answer that covers ALL aspects of the task without exception.
+
+For planning or structuring tasks (novel plans, architecture, strategy, etc.) — done=true only if ALL required components are present with sufficient detail (e.g. for a novel: genre, all key characters, chapter structure, key events, climax and resolution).
+
+If the thought covers only ONE aspect, idea, or fragment — done=false. When in doubt — always done=false.
+
+done: true ONLY if this thought is a FULL and EXHAUSTIVE answer to the task (covers ALL aspects).
+final_answer: the complete final answer if done=true (must fully address the original request), otherwise null.

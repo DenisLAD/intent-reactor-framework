@@ -11,6 +11,7 @@ import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -39,8 +40,8 @@ public class KnowAgentPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(KnowAgentPlanner.class);
 
-    private static final String KB_KEY = "knowagent_kb";
-    private static final String INITIALIZED_KEY = "knowagent_initialized";
+    private static final String KB_KEY          = StrategySessionKeys.KNOWAGENT_KB;
+    private static final String INITIALIZED_KEY = StrategySessionKeys.KNOWAGENT_INITIALIZED;
 
     private static final Pattern PRECONDITION_PATTERN =
             Pattern.compile("(?i)(requires?|needs?|must first|after calling|before|depends on)");

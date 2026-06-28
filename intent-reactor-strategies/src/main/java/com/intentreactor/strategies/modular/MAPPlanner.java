@@ -11,6 +11,7 @@ import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -31,7 +32,7 @@ public class MAPPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(MAPPlanner.class);
 
-    private static final String PHASE_KEY = "map_phase";
+    private static final String PHASE_KEY = StrategySessionKeys.MAP_PHASE;
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
@@ -328,12 +329,9 @@ public class MAPPlanner implements Planner {
             String g = session.getPlanState().getGoalDescription();
             if (g != null && !g.isBlank()) return g;
         }
-        if (intent != null && intent.getReasoningSuggestion() != null
-                && !intent.getReasoningSuggestion().isBlank()) {
-            return intent.getReasoningSuggestion();
-        }
-        if (intent != null && !intent.getIntents().isEmpty()) {
-            return intent.getIntents().get(0).getName();
+        List<Message> msgs = session.getMessages();
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            if (msgs.get(i).getRole() == Message.Role.USER) return msgs.get(i).getContent();
         }
         return "unknown";
     }

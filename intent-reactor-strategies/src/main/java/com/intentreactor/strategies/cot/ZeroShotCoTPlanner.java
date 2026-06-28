@@ -7,6 +7,7 @@ import com.intentreactor.api.Planner;
 import com.intentreactor.api.SessionState;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,7 +24,7 @@ import java.util.Map;
 public class ZeroShotCoTPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(ZeroShotCoTPlanner.class);
-    private static final String ZS_COT_INJECTED_KEY = "zs_cot_injected";
+    private static final String ZS_COT_INJECTED_KEY = StrategySessionKeys.ZS_COT_INJECTED;
 
     private final Planner delegate;
     private final PromptLoader promptLoader = new PromptLoader();

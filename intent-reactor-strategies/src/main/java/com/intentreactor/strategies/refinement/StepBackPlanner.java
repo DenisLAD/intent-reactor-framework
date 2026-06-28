@@ -7,6 +7,7 @@ import com.intentreactor.api.Planner;
 import com.intentreactor.api.SessionState;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -29,7 +30,7 @@ import java.util.Map;
 public class StepBackPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(StepBackPlanner.class);
-    private static final String STEP_BACK_DONE_KEY = "step_back_done";
+    private static final String STEP_BACK_DONE_KEY = StrategySessionKeys.STEP_BACK_DONE;
 
     private final Planner delegate;
     private final ChatClient chatClient;
@@ -50,7 +51,8 @@ public class StepBackPlanner implements Planner {
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         if (!Boolean.TRUE.equals(session.getAttributes().get(STEP_BACK_DONE_KEY))) {
-            String goal = intent.getIntents().isEmpty() ? "unknown" : intent.getIntents().get(0).getName();
+            String goal = session.getPlanState() != null && session.getPlanState().getGoalDescription() != null
+                    ? session.getPlanState().getGoalDescription() : "unknown";
             try {
                 String systemPrompt = promptLoader.load(abstractPromptPath, Map.of());
                 String userPrompt = promptLoader.load(userPromptPath, Map.of("goal", goal));

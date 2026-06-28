@@ -32,6 +32,7 @@ public class StrategiesProperties {
         private String stepBackAbstract      = "classpath:prompts/strategies/step-back-abstract.md";
         private String stepBackUser          = "classpath:prompts/strategies/step-back-user.md";
         // Reflection
+        private String reflectionCritique    = "classpath:prompts/strategies/reflection-critique.md";
         private String reflectionUser        = "classpath:prompts/strategies/reflection-user.md";
         // SelfAsk
         private String selfAskDecompose      = "classpath:prompts/strategies/self-ask-decompose.md";
@@ -45,6 +46,7 @@ public class StrategiesProperties {
         // ToT
         private String totGenerate           = "classpath:prompts/strategies/tot-generate.md";
         private String totEvaluate           = "classpath:prompts/strategies/tot-evaluate.md";
+        private String totSynthesize         = "classpath:prompts/strategies/tot-synthesize.md";
         // GoT
         private String gotGenerate           = "classpath:prompts/strategies/got-generate.md";
         private String gotScore              = "classpath:prompts/strategies/got-score.md";
@@ -87,7 +89,8 @@ public class StrategiesProperties {
         private String improvement         = "\nImprovement: ";
         private String originalQuestion    = "Original question: ";
         private String collectedAnswers    = "\n\nCollected answers:\n";
-        private String giveFinalAnswer     = "\n\nNow give the final answer to the original question.";
+        private String giveFinalAnswer      = "\n\nNow give the final answer to the original question.";
+        private String answerDirectly       = "\n\nAnswer this question comprehensively and in a structured manner.";
         private String originalTask        = "Original task: ";
         private String previousResults     = "\n\nPrevious subtask results:\n";
         private String subtaskResults      = "\n\nSubtask results:\n";
@@ -105,6 +108,7 @@ public class StrategiesProperties {
         private String subtask             = "[SUBTASK ";
         private String noSolution          = "No solution found.";
         private String continueExpansion   = "Continuing exploration...";
+        private String bestReasoningPath   = "Best reasoning path:\n\n";
         // KnowAgent
         private String kbAvailable         = "Available tools (preconditions met): ";
         private String kbUnavailable       = "Unavailable tools: ";
@@ -124,6 +128,7 @@ public class StrategiesProperties {
         private String mapPlanHeader          = "[MAP PLAN]\nGoal:";
         private String mapToolParameters      = "  Parameters: ";
         private String mapToolRequired        = " (required: ";
+        private String directAnswerReason     = "[Direct answer] Answering directly: ";
     }
 
     @Data

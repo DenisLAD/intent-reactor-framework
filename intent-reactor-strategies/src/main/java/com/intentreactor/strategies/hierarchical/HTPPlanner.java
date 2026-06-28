@@ -16,6 +16,7 @@ import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -42,13 +43,13 @@ public class HTPPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(HTPPlanner.class);
 
-    private static final String PHASE_KEY = "htp_phase";
-    private static final String SUBGOALS_KEY = "htp_subgoals";
-    private static final String SUBGOAL_IDX_KEY = "htp_subgoal_idx";
-    private static final String STEPS_KEY = "htp_steps";
-    private static final String STEP_IDX_KEY = "htp_step_idx";
-    private static final String RESULTS_KEY = "htp_results";
-    private static final String REFINEMENT_COUNT_KEY = "htp_refine_count";
+    private static final String PHASE_KEY            = StrategySessionKeys.HTP_PHASE;
+    private static final String SUBGOALS_KEY          = StrategySessionKeys.HTP_SUBGOALS;
+    private static final String SUBGOAL_IDX_KEY       = StrategySessionKeys.HTP_SUBGOAL_IDX;
+    private static final String STEPS_KEY             = StrategySessionKeys.HTP_STEPS;
+    private static final String STEP_IDX_KEY          = StrategySessionKeys.HTP_STEP_IDX;
+    private static final String RESULTS_KEY           = StrategySessionKeys.HTP_RESULTS;
+    private static final String REFINEMENT_COUNT_KEY  = StrategySessionKeys.HTP_REFINEMENT_COUNT;
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
@@ -84,7 +85,7 @@ public class HTPPlanner implements Planner {
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "DECOMPOSE");
-        String goal = getGoal(intent);
+        String goal = getGoal(session);
 
         return switch (phase) {
             case "DECOMPOSE" -> decompose(session, goal);
@@ -341,8 +342,15 @@ public class HTPPlanner implements Planner {
         return s.strip();
     }
 
-    private String getGoal(IntentAnalysisResult intent) {
-        if (intent == null || intent.getIntents().isEmpty()) return "unknown";
-        return intent.getIntents().get(0).getName();
+    private String getGoal(SessionState session) {
+        if (session.getPlanState() != null) {
+            String g = session.getPlanState().getGoalDescription();
+            if (g != null && !g.isBlank()) return g;
+        }
+        List<Message> msgs = session.getMessages();
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            if (msgs.get(i).getRole() == Message.Role.USER) return msgs.get(i).getContent();
+        }
+        return "unknown";
     }
 }

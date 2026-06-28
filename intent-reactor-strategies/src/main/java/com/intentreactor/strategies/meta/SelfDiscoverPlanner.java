@@ -9,6 +9,7 @@ import com.intentreactor.api.Planner;
 import com.intentreactor.api.SessionState;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -33,9 +34,9 @@ public class SelfDiscoverPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(SelfDiscoverPlanner.class);
 
-    private static final String PHASE_KEY = "sd_phase";
-    private static final String MODULES_KEY = "sd_selected_modules";
-    private static final String PLAN_KEY = "sd_plan";
+    private static final String PHASE_KEY   = StrategySessionKeys.SD_PHASE;
+    private static final String MODULES_KEY = StrategySessionKeys.SD_MODULES;
+    private static final String PLAN_KEY    = StrategySessionKeys.SD_PLAN;
 
     private final Planner delegate;
     private final ChatClient chatClient;
@@ -60,7 +61,7 @@ public class SelfDiscoverPlanner implements Planner {
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "SELECT");
-        String goal = getGoal(intent);
+        String goal = getGoal(session);
 
         return switch (phase) {
             case "SELECT" -> selectModules(session, goal, intent);
@@ -154,8 +155,15 @@ public class SelfDiscoverPlanner implements Planner {
         return s.strip();
     }
 
-    private String getGoal(IntentAnalysisResult intent) {
-        if (intent == null || intent.getIntents().isEmpty()) return "unknown";
-        return intent.getIntents().get(0).getName();
+    private String getGoal(SessionState session) {
+        if (session.getPlanState() != null) {
+            String g = session.getPlanState().getGoalDescription();
+            if (g != null && !g.isBlank()) return g;
+        }
+        List<Message> msgs = session.getMessages();
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            if (msgs.get(i).getRole() == Message.Role.USER) return msgs.get(i).getContent();
+        }
+        return "unknown";
     }
 }

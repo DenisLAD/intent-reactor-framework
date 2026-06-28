@@ -12,6 +12,7 @@ import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.StepType;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -37,10 +38,10 @@ public class LeastToMostPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(LeastToMostPlanner.class);
 
-    private static final String PHASE_KEY = "ltm_phase";
-    private static final String TASKS_KEY = "ltm_tasks";
-    private static final String RESULTS_KEY = "ltm_results";
-    private static final String INDEX_KEY = "ltm_index";
+    private static final String PHASE_KEY   = StrategySessionKeys.LTM_PHASE;
+    private static final String TASKS_KEY   = StrategySessionKeys.LTM_TASKS;
+    private static final String RESULTS_KEY = StrategySessionKeys.LTM_RESULTS;
+    private static final String INDEX_KEY   = StrategySessionKeys.LTM_INDEX;
 
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
@@ -65,7 +66,7 @@ public class LeastToMostPlanner implements Planner {
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "DECOMPOSE");
-        String goal = getGoal(intent);
+        String goal = getGoal(session);
 
         return switch (phase) {
             case "DECOMPOSE" -> decompose(session, goal);
@@ -180,8 +181,15 @@ public class LeastToMostPlanner implements Planner {
         return s.strip();
     }
 
-    private String getGoal(IntentAnalysisResult intent) {
-        if (intent == null || intent.getIntents().isEmpty()) return "unknown";
-        return intent.getIntents().get(0).getName();
+    private String getGoal(SessionState session) {
+        if (session.getPlanState() != null) {
+            String g = session.getPlanState().getGoalDescription();
+            if (g != null && !g.isBlank()) return g;
+        }
+        List<Message> msgs = session.getMessages();
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            if (msgs.get(i).getRole() == Message.Role.USER) return msgs.get(i).getContent();
+        }
+        return "unknown";
     }
 }

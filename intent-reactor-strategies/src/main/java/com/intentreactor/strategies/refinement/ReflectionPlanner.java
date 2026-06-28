@@ -9,6 +9,7 @@ import com.intentreactor.api.SessionState;
 import com.intentreactor.api.StepType;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -32,8 +33,7 @@ import java.util.Map;
 public class ReflectionPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(ReflectionPlanner.class);
-    private static final String REFLECTION_COUNT_KEY = "reflection_count";
-    private static final String BASE_CRITIQUE = "classpath:prompts/strategies/reflection-critique.md";
+    private static final String REFLECTION_COUNT_KEY = StrategySessionKeys.REFLECTION_COUNT;
 
     private final Planner delegate;
     private final ChatClient chatClient;
@@ -41,6 +41,7 @@ public class ReflectionPlanner implements Planner {
     private final int maxIterations;
     private final double satisfactionThreshold;
     private final PromptLoader promptLoader = new PromptLoader();
+    private final String critiquePromptPath;
     private final String userPromptPath;
     private final StrategiesProperties.LabelsConfig labels;
 
@@ -51,6 +52,7 @@ public class ReflectionPlanner implements Planner {
         this.objectMapper = objectMapper;
         this.maxIterations = strategiesProperties.getReflection().getMaxIterations();
         this.satisfactionThreshold = strategiesProperties.getReflection().getSatisfactionThreshold();
+        this.critiquePromptPath = strategiesProperties.getPrompts().getReflectionCritique();
         this.userPromptPath = strategiesProperties.getPrompts().getReflectionUser();
         this.labels = strategiesProperties.getLabels();
     }
@@ -70,10 +72,11 @@ public class ReflectionPlanner implements Planner {
         }
 
         String finalAnswer = plan.steps().get(0).description();
-        String goal = intent.getIntents().isEmpty() ? "" : intent.getIntents().get(0).getName();
+        String goal = session.getPlanState() != null && session.getPlanState().getGoalDescription() != null
+                ? session.getPlanState().getGoalDescription() : "";
 
         try {
-            String criticSystem = promptLoader.load(BASE_CRITIQUE, Map.of());
+            String criticSystem = promptLoader.load(critiquePromptPath, Map.of());
             String userPrompt = promptLoader.load(userPromptPath, Map.of(
                     "goal", goal,
                     "answer", finalAnswer != null ? finalAnswer : ""

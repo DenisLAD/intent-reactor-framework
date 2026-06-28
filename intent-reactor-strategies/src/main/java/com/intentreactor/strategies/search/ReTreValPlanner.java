@@ -18,6 +18,7 @@ import com.intentreactor.api.ToolProvider;
 import com.intentreactor.api.ToolResult;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -56,12 +57,12 @@ public class ReTreValPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(ReTreValPlanner.class);
 
-    private static final String TREE_KEY      = "retreval_tree";
-    private static final String PHASE_KEY     = "retreval_phase";
-    private static final String FRONTIER_KEY  = "retreval_frontier";
-    private static final String CUR_NODE_KEY  = "retreval_cur_node";
-    private static final String PATTERNS_KEY  = "retreval_patterns";
-    private static final String BACKTRACK_KEY = "retreval_backtrack";
+    private static final String TREE_KEY      = StrategySessionKeys.RETREVAL_TREE;
+    private static final String PHASE_KEY     = StrategySessionKeys.RETREVAL_PHASE;
+    private static final String FRONTIER_KEY  = StrategySessionKeys.RETREVAL_FRONTIER;
+    private static final String CUR_NODE_KEY  = StrategySessionKeys.RETREVAL_CUR_NODE;
+    private static final String PATTERNS_KEY  = StrategySessionKeys.RETREVAL_PATTERNS;
+    private static final String BACKTRACK_KEY = StrategySessionKeys.RETREVAL_BACKTRACK;
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;

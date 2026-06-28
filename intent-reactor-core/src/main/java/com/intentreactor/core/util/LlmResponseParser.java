@@ -18,6 +18,20 @@ public final class LlmResponseParser {
     private LlmResponseParser() {}
 
     /**
+     * Strips {@code <think>...</think>} reasoning blocks emitted by models such as Qwen3.
+     * Handles multiple blocks and unclosed tags (strips from {@code <think>} to end if not closed).
+     */
+    public static String stripThinkingBlocks(String response) {
+        if (response == null) return null;
+        // Remove all complete <think>…</think> blocks
+        String result = response.replaceAll("(?s)<think>.*?</think>", "");
+        // Remove any unclosed <think>… block at the end
+        int unclosed = result.lastIndexOf("<think>");
+        if (unclosed >= 0) result = result.substring(0, unclosed);
+        return result.strip();
+    }
+
+    /**
      * Strips leading/trailing {@code ```} markdown code fences from a response.
      */
     public static String stripMarkdownFences(String response) {
@@ -104,7 +118,7 @@ public final class LlmResponseParser {
     public static String extractJson(String response, ObjectMapper objectMapper,
                                      Set<String> preferredKeys) {
         if (response == null) throw new IllegalArgumentException("Empty LLM response");
-        String stripped = stripMarkdownFences(response);
+        String stripped = stripMarkdownFences(stripThinkingBlocks(response));
         List<String> candidates = extractAllJsonCandidates(stripped);
         if (candidates.isEmpty()) {
             String repaired = repairTruncatedJson(stripped);

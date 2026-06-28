@@ -3,6 +3,7 @@ package com.intentreactor.strategies;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.intentreactor.api.Intent;
 import com.intentreactor.api.IntentAnalysisResult;
+import com.intentreactor.api.Message;
 import com.intentreactor.api.Plan;
 import com.intentreactor.api.SessionState;
 import com.intentreactor.api.StepType;
@@ -52,9 +53,10 @@ class DecompositionPlannersTest {
     @BeforeEach
     void setUp() {
         session = new SessionState("test-session");
+        session.addMessage(Message.user("find the weather and calculate"));
         props = new StrategiesProperties();
         objectMapper = new ObjectMapper();
-        Intent i = new Intent("find the weather and calculate", 1.0, Map.of());
+        Intent i = new Intent("find_information", 1.0, Map.of());
         intent = new IntentAnalysisResult();
         intent.setIntents(List.of(i));
 
@@ -69,28 +71,34 @@ class DecompositionPlannersTest {
 
     @Test
     void selfAsk_decomposePhaseMovesToAnswer() {
+        // Tool-requiring question: DECOMPOSE → ANSWER phase with ACT step
         when(callResponseSpec.content()).thenReturn(
-                "[{\"question\": \"What is today's date?\", \"requires_tool\": false}]");
+                "[{\"question\": \"What is today's weather?\", \"requires_tool\": true}]");
 
         SelfAskPlanner planner = new SelfAskPlanner(chatClient, toolProvider, objectMapper, props);
         Plan firstPlan = planner.plan(session, intent);
 
         assertThat(session.getAttributes()).containsKey("sa_phase");
         assertThat(session.getAttributes().get("sa_phase")).isEqualTo("ANSWER");
-        // First step: answer the sub-question (REASON since requires_tool=false)
-        assertThat(firstPlan.steps().get(0).type()).isEqualTo(StepType.REASON);
+        // Tool question returns ACT step
+        assertThat(firstPlan.steps().get(0).type()).isEqualTo(StepType.ACT);
     }
 
     @Test
     void selfAsk_emptyQuestionsGoesToSynthesize() {
-        when(callResponseSpec.content()).thenReturn("[]");
-        // synthesize call
+        // First plan() call: LLM returns [] → no sub-questions → REASON step returned, phase set to SYNTHESIZE
         when(callResponseSpec.content()).thenReturn("[]", "Final synthesized answer");
 
         SelfAskPlanner planner = new SelfAskPlanner(chatClient, toolProvider, objectMapper, props);
-        Plan plan = planner.plan(session, intent);
+        Plan firstPlan = planner.plan(session, intent);
 
-        assertThat(plan.steps().get(0).type()).isEqualTo(StepType.DONE);
+        // First call returns REASON so service can publish PlanStepStartedEvent
+        assertThat(firstPlan.steps().get(0).type()).isEqualTo(StepType.REASON);
+        assertThat(session.getAttributes().get("sa_phase")).isEqualTo("SYNTHESIZE");
+
+        // Second call goes to SYNTHESIZE → DONE
+        Plan secondPlan = planner.plan(session, intent);
+        assertThat(secondPlan.steps().get(0).type()).isEqualTo(StepType.DONE);
     }
 
     @Test

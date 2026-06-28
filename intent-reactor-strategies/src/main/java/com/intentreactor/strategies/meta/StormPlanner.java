@@ -15,6 +15,7 @@ import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -39,10 +40,10 @@ public class StormPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(StormPlanner.class);
 
-    private static final String PHASE_KEY = "storm_phase";
-    private static final String PERSPECTIVES_KEY = "storm_perspectives";
-    private static final String PERSONA_INDEX_KEY = "storm_persona_index";
-    private static final String RESEARCH_STEPS_KEY = "storm_research_steps";
+    private static final String PHASE_KEY          = StrategySessionKeys.STORM_PHASE;
+    private static final String PERSPECTIVES_KEY   = StrategySessionKeys.STORM_PERSPECTIVES;
+    private static final String PERSONA_INDEX_KEY  = StrategySessionKeys.STORM_PERSONA_INDEX;
+    private static final String RESEARCH_STEPS_KEY = StrategySessionKeys.STORM_RESEARCH_STEPS;
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
@@ -71,7 +72,7 @@ public class StormPlanner implements Planner {
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "PERSPECTIVES");
-        String goal = getGoal(intent);
+        String goal = getGoal(session);
 
         return switch (phase) {
             case "PERSPECTIVES" -> generatePerspectives(session, goal);
@@ -258,9 +259,16 @@ public class StormPlanner implements Planner {
         return s.strip();
     }
 
-    private String getGoal(IntentAnalysisResult intent) {
-        if (intent == null || intent.getIntents().isEmpty()) return "unknown";
-        return intent.getIntents().get(0).getName();
+    private String getGoal(SessionState session) {
+        if (session.getPlanState() != null) {
+            String g = session.getPlanState().getGoalDescription();
+            if (g != null && !g.isBlank()) return g;
+        }
+        List<Message> msgs = session.getMessages();
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            if (msgs.get(i).getRole() == Message.Role.USER) return msgs.get(i).getContent();
+        }
+        return "unknown";
     }
 
     private static class ResearchAction {

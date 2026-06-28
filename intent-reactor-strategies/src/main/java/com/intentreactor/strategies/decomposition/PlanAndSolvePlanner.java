@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.intentreactor.api.Action;
 import com.intentreactor.api.IntentAnalysisResult;
+import com.intentreactor.api.Message;
 import com.intentreactor.api.Plan;
 import com.intentreactor.api.Planner;
 import com.intentreactor.api.SessionState;
@@ -15,6 +16,7 @@ import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -39,9 +41,10 @@ public class PlanAndSolvePlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(PlanAndSolvePlanner.class);
 
-    private static final String PHASE_KEY = "pas_phase";
-    private static final String PLAN_KEY = "pas_plan";
-    private static final String STEP_KEY = "pas_step";
+    private static final String PHASE_KEY = StrategySessionKeys.PAS_PHASE;
+    private static final String PLAN_KEY  = StrategySessionKeys.PAS_PLAN;
+    private static final String STEP_KEY  = StrategySessionKeys.PAS_STEP;
+    private static final String GOAL_KEY  = StrategySessionKeys.PAS_GOAL;
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
@@ -64,7 +67,7 @@ public class PlanAndSolvePlanner implements Planner {
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "PLANNING");
-        String goal = getGoal(intent);
+        String goal = getGoal(session);
 
         return switch (phase) {
             case "PLANNING" -> generatePlan(session, intent, goal);
@@ -94,6 +97,7 @@ public class PlanAndSolvePlanner implements Planner {
                 return new SimplePlan(List.of(SimplePlanStep.fail("Could not generate a plan for: " + goal)));
             }
 
+            session.getAttributes().put(GOAL_KEY, goal);
             session.getAttributes().put(PLAN_KEY, steps);
             session.getAttributes().put(STEP_KEY, 0);
             session.getAttributes().put(PHASE_KEY, "EXECUTING");
@@ -114,7 +118,7 @@ public class PlanAndSolvePlanner implements Planner {
         int stepIndex = (int) session.getAttributes().getOrDefault(STEP_KEY, 0);
 
         if (steps == null || stepIndex >= steps.size()) {
-            return new SimplePlan(List.of(SimplePlanStep.done("Plan completed successfully.")));
+            return synthesizeFinal(session);
         }
 
         Map<String, Object> step = steps.get(stepIndex);
@@ -129,7 +133,7 @@ public class PlanAndSolvePlanner implements Planner {
 
         if (toolName == null || toolName.isBlank()) {
             if (isLastStep) {
-                return new SimplePlan(List.of(SimplePlanStep.done(description)));
+                return synthesizeFinal(session);
             }
             return new SimplePlan(List.of(new SimplePlanStep(StepType.REASON, null, description, false)));
         }
@@ -145,6 +149,36 @@ public class PlanAndSolvePlanner implements Planner {
 
         Action action = new SimpleAction(toolName, parameters);
         return new SimplePlan(List.of(SimplePlanStep.act(action, description, isRisky)));
+    }
+
+    private Plan synthesizeFinal(SessionState session) {
+        String goal = (String) session.getAttributes().getOrDefault(GOAL_KEY, "");
+
+        StringBuilder results = new StringBuilder();
+        for (Message m : session.getMessages()) {
+            if (m.getRole() == Message.Role.SYSTEM) {
+                results.append(m.getContent()).append("\n");
+            }
+        }
+
+        try {
+            String finalAnswer = chatClient.prompt(new Prompt(List.of(
+                    new SystemMessage("Ты помощник. Сформулируй чёткий финальный ответ на задачу пользователя, опираясь на результаты выполненных шагов."),
+                    new UserMessage(labels.getTask() + goal + "\n\nРезультаты шагов:\n" + results)
+            ))).call().content();
+            log.debug("[PlanAndSolve] Synthesized final answer for session {}", session.getId());
+            return new SimplePlan(List.of(SimplePlanStep.done(finalAnswer)));
+        } catch (Exception e) {
+            log.warn("[PlanAndSolve] Synthesis failed: {}", e.getMessage());
+            // Fallback: last SYSTEM message from session
+            List<Message> messages = session.getMessages();
+            for (int i = messages.size() - 1; i >= 0; i--) {
+                if (messages.get(i).getRole() == Message.Role.SYSTEM) {
+                    return new SimplePlan(List.of(SimplePlanStep.done(messages.get(i).getContent())));
+                }
+            }
+            return new SimplePlan(List.of(SimplePlanStep.done(results.toString().trim())));
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -171,8 +205,15 @@ public class PlanAndSolvePlanner implements Planner {
         return s.strip();
     }
 
-    private String getGoal(IntentAnalysisResult intent) {
-        if (intent == null || intent.getIntents().isEmpty()) return "unknown";
-        return intent.getIntents().get(0).getName();
+    private String getGoal(SessionState session) {
+        if (session.getPlanState() != null) {
+            String g = session.getPlanState().getGoalDescription();
+            if (g != null && !g.isBlank()) return g;
+        }
+        List<Message> msgs = session.getMessages();
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            if (msgs.get(i).getRole() == Message.Role.USER) return msgs.get(i).getContent();
+        }
+        return "unknown";
     }
 }

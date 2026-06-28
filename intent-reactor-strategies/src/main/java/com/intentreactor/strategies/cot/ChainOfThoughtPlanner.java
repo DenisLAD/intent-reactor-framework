@@ -7,6 +7,7 @@ import com.intentreactor.api.Planner;
 import com.intentreactor.api.SessionState;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,7 +25,7 @@ import java.util.Map;
 public class ChainOfThoughtPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(ChainOfThoughtPlanner.class);
-    private static final String COT_INJECTED_KEY = "cot_injected";
+    private static final String COT_INJECTED_KEY = StrategySessionKeys.COT_INJECTED;
     private final Planner delegate;
     private final PromptLoader promptLoader = new PromptLoader();
     private final String promptPath;

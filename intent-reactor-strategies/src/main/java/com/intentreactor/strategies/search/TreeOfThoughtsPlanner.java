@@ -3,6 +3,7 @@ package com.intentreactor.strategies.search;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.intentreactor.api.IntentAnalysisResult;
+import com.intentreactor.api.Message;
 import com.intentreactor.api.Plan;
 import com.intentreactor.api.Planner;
 import com.intentreactor.api.SessionState;
@@ -11,6 +12,7 @@ import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.StepType;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -23,6 +25,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * Tree-of-Thoughts (ToT) planner: explores a tree of intermediate reasoning steps using
@@ -39,7 +42,7 @@ import java.util.stream.Collectors;
 public class TreeOfThoughtsPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(TreeOfThoughtsPlanner.class);
-    private static final String TREE_KEY = "tot_tree";
+    private static final String TREE_KEY = StrategySessionKeys.TOT_TREE;
 
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
@@ -50,6 +53,7 @@ public class TreeOfThoughtsPlanner implements Planner {
     private final PromptLoader promptLoader = new PromptLoader();
     private final String generatePromptPath;
     private final String evaluatePromptPath;
+    private final String synthesizePromptPath;
     private final StrategiesProperties.LabelsConfig labels;
 
     public TreeOfThoughtsPlanner(ChatClient chatClient, ObjectMapper objectMapper,
@@ -63,18 +67,19 @@ public class TreeOfThoughtsPlanner implements Planner {
         this.maxDepth = cfg.getMaxDepth();
         this.generatePromptPath = props.getPrompts().getTotGenerate();
         this.evaluatePromptPath = props.getPrompts().getTotEvaluate();
+        this.synthesizePromptPath = props.getPrompts().getTotSynthesize();
         this.labels = props.getLabels();
     }
 
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
-        String goal = getGoal(intent);
+        String goal = getGoal(session);
         ThoughtGraph tree = loadOrCreateTree(session, goal);
 
         List<ThoughtNode> frontier = selectFrontier(tree);
         if (frontier.isEmpty()) {
             ThoughtNode best = tree.bestNode().orElse(null);
-            String answer = best != null ? best.getContent() : labels.getNoSolution();
+            String answer = best != null ? synthesizeBestPath(tree, goal) : labels.getNoSolution();
             return new SimplePlan(List.of(SimplePlanStep.done(answer)));
         }
 
@@ -106,7 +111,7 @@ public class TreeOfThoughtsPlanner implements Planner {
         saveTree(session, tree);
 
         if (bestNode != null && bestNode.getDepth() >= maxDepth) {
-            return new SimplePlan(List.of(SimplePlanStep.done(bestNode.getContent())));
+            return new SimplePlan(List.of(SimplePlanStep.done(synthesizeBestPath(tree, goal))));
         }
 
         String reasoning = bestNode != null ? bestNode.getContent() : labels.getContinueExpansion();
@@ -233,15 +238,48 @@ public class TreeOfThoughtsPlanner implements Planner {
         return s.strip();
     }
 
-    private String getGoal(IntentAnalysisResult intent) {
-        if (intent != null && intent.getReasoningSuggestion() != null
-                && !intent.getReasoningSuggestion().isBlank()) {
-            return intent.getReasoningSuggestion();
+    private String synthesizeBestPath(ThoughtGraph tree, String goal) {
+        ThoughtNode best = tree.bestNode().orElse(null);
+        if (best == null) return labels.getNoSolution();
+
+        List<ThoughtNode> path = new ArrayList<>();
+        ThoughtNode node = best;
+        while (node != null && !node.getId().equals(tree.getRootId())) {
+            path.add(0, node);
+            String parentId = node.getParentId();
+            node = parentId != null ? tree.getNodes().get(parentId) : null;
         }
-        if (intent != null && !intent.getIntents().isEmpty()) {
-            return intent.getIntents().get(0).getName();
+
+        if (path.isEmpty()) return best.getContent();
+
+        String thoughts = IntStream.range(0, path.size())
+                .mapToObj(i -> (i + 1) + ". " + path.get(i).getContent())
+                .collect(Collectors.joining("\n\n"));
+
+        try {
+            String system = promptLoader.load(synthesizePromptPath, Map.of());
+            String userMsg = labels.getTask() + goal + "\n\n" + labels.getBestReasoningPath() + thoughts;
+            String result = chatClient.prompt(new Prompt(List.of(
+                    new SystemMessage(system),
+                    new UserMessage(userMsg)
+            ))).call().content();
+            return result != null ? result.strip() : best.getContent();
+        } catch (Exception e) {
+            log.warn("[ToT] Synthesis failed: {}", e.getMessage());
+            return best.getContent();
         }
-        return "Process user request";
+    }
+
+    private String getGoal(SessionState session) {
+        if (session.getPlanState() != null) {
+            String g = session.getPlanState().getGoalDescription();
+            if (g != null && !g.isBlank()) return g;
+        }
+        List<Message> msgs = session.getMessages();
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            if (msgs.get(i).getRole() == Message.Role.USER) return msgs.get(i).getContent();
+        }
+        return "unknown";
     }
 
     private static class EvalResult {

@@ -2,6 +2,7 @@ package com.intentreactor.strategies.search;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.intentreactor.api.IntentAnalysisResult;
+import com.intentreactor.api.Message;
 import com.intentreactor.api.Plan;
 import com.intentreactor.api.Planner;
 import com.intentreactor.api.SessionState;
@@ -10,6 +11,7 @@ import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.StepType;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -34,7 +36,7 @@ import java.util.stream.Collectors;
 public class GraphOfThoughtsPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(GraphOfThoughtsPlanner.class);
-    private static final String GRAPH_KEY = "got_graph";
+    private static final String GRAPH_KEY = StrategySessionKeys.GOT_GRAPH;
 
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
@@ -56,7 +58,7 @@ public class GraphOfThoughtsPlanner implements Planner {
 
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
-        String goal = getGoal(intent);
+        String goal = getGoal(session);
         ThoughtGraph graph = loadOrCreateGraph(session, goal);
 
         if (graph.getOperationCount() >= maxOperations) {
@@ -191,15 +193,16 @@ public class GraphOfThoughtsPlanner implements Planner {
         return s.strip();
     }
 
-    private String getGoal(IntentAnalysisResult intent) {
-        if (intent != null && intent.getReasoningSuggestion() != null
-                && !intent.getReasoningSuggestion().isBlank()) {
-            return intent.getReasoningSuggestion();
+    private String getGoal(SessionState session) {
+        if (session.getPlanState() != null) {
+            String g = session.getPlanState().getGoalDescription();
+            if (g != null && !g.isBlank()) return g;
         }
-        if (intent != null && !intent.getIntents().isEmpty()) {
-            return intent.getIntents().get(0).getName();
+        List<Message> msgs = session.getMessages();
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            if (msgs.get(i).getRole() == Message.Role.USER) return msgs.get(i).getContent();
         }
-        return "Process user request";
+        return "unknown";
     }
 
     private static class OperationResult {

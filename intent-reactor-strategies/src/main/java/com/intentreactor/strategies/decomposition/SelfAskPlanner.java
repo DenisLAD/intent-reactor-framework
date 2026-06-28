@@ -3,7 +3,6 @@ package com.intentreactor.strategies.decomposition;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.intentreactor.api.Action;
-import com.intentreactor.api.Intent;
 import com.intentreactor.api.IntentAnalysisResult;
 import com.intentreactor.api.Message;
 import com.intentreactor.api.Plan;
@@ -17,6 +16,7 @@ import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
+import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -42,10 +42,10 @@ public class SelfAskPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(SelfAskPlanner.class);
 
-    private static final String PHASE_KEY = "sa_phase";
-    private static final String QUESTIONS_KEY = "sa_questions";
-    private static final String ANSWERS_KEY = "sa_answers";
-    private static final String INDEX_KEY = "sa_q_index";
+    private static final String PHASE_KEY     = StrategySessionKeys.SA_PHASE;
+    private static final String QUESTIONS_KEY = StrategySessionKeys.SA_QUESTIONS;
+    private static final String ANSWERS_KEY   = StrategySessionKeys.SA_ANSWERS;
+    private static final String INDEX_KEY     = StrategySessionKeys.SA_INDEX;
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
@@ -70,7 +70,7 @@ public class SelfAskPlanner implements Planner {
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "DECOMPOSE");
-        String goal = getGoal(intent);
+        String goal = getGoal(session);
 
         return switch (phase) {
             case "DECOMPOSE" -> decompose(session, goal);
@@ -96,10 +96,13 @@ public class SelfAskPlanner implements Planner {
             }
 
             if (questions.isEmpty()) {
-                log.debug("[Self-Ask] No sub-questions needed for session {}, proceeding directly", session.getId());
+                log.info("[Self-Ask] No sub-questions needed for session {}, answering directly", session.getId());
                 session.getAttributes().put(PHASE_KEY, "SYNTHESIZE");
                 session.getAttributes().put(ANSWERS_KEY, new HashMap<>());
-                return synthesize(session, goal);
+                // Return a REASON step so the service publishes PlanStepStartedEvent → SSE → UI shows progress.
+                // Next call to plan() will find phase="SYNTHESIZE" → synthesize() → DONE.
+                return new SimplePlan(List.of(new SimplePlanStep(StepType.REASON, null,
+                        labels.getDirectAnswerReason() + goal, false)));
             }
 
             session.getAttributes().put(QUESTIONS_KEY, questions);
@@ -125,14 +128,17 @@ public class SelfAskPlanner implements Planner {
                 (Map<String, String>) session.getAttributes().get(ANSWERS_KEY);
         int index = (int) session.getAttributes().getOrDefault(INDEX_KEY, 0);
 
+        // Collect tool result from the previous ACT step — only for tool-based questions
         if (intent != null && index > 0) {
-            List<Message> messages = session.getMessages();
-            if (!messages.isEmpty()) {
-                Message last = messages.get(messages.size() - 1);
-                if (last.getRole() == Message.Role.SYSTEM || last.getRole() == Message.Role.ASSISTANT) {
-                    String qKey = "q" + (index - 1);
-                    answers.put(qKey, last.getContent());
-                    session.getAttributes().put(ANSWERS_KEY, answers);
+            Map<String, Object> prevQ = questions.get(index - 1);
+            if (Boolean.TRUE.equals(prevQ.get("requires_tool"))) {
+                List<Message> messages = session.getMessages();
+                if (!messages.isEmpty()) {
+                    Message last = messages.get(messages.size() - 1);
+                    if (last.getRole() == Message.Role.SYSTEM || last.getRole() == Message.Role.ASSISTANT) {
+                        answers.put("q" + (index - 1), last.getContent());
+                        session.getAttributes().put(ANSWERS_KEY, answers);
+                    }
                 }
             }
         }
@@ -146,19 +152,36 @@ public class SelfAskPlanner implements Planner {
         String question = (String) q.get("question");
         boolean requiresTool = Boolean.TRUE.equals(q.get("requires_tool"));
 
-        session.getAttributes().put(INDEX_KEY, index + 1);
-        session.addMessage(Message.system(labels.getSubQuestion() + (index + 1) + "] " + question));
+        int nextIndex = index + 1;
+        session.getAttributes().put(INDEX_KEY, nextIndex);
 
         if (requiresTool) {
             List<Tool> tools = toolProvider.getAvailableTools(session);
             if (!tools.isEmpty()) {
+                session.addMessage(Message.system(labels.getSubQuestion() + (index + 1) + "] " + question));
                 Tool firstTool = tools.get(0);
                 Action action = new SimpleAction(firstTool.getName(), Map.of("query", question));
                 return new SimplePlan(List.of(SimplePlanStep.act(action, "Answer sub-question: " + question, false)));
             }
         }
 
-        return new SimplePlan(List.of(new SimplePlanStep(StepType.REASON, null, "Sub-question: " + question, false)));
+        // Answer via LLM inline — no tool needed (or no tool available)
+        try {
+            String answer = chatClient.prompt(new Prompt(List.of(
+                    new UserMessage(question)
+            ))).call().content();
+            answers.put("q" + index, answer);
+            session.getAttributes().put(ANSWERS_KEY, answers);
+            log.debug("[Self-Ask] Answered sub-question {} via LLM for session {}", index, session.getId());
+        } catch (Exception e) {
+            log.warn("[Self-Ask] LLM answer failed for sub-question {}: {}", index, e.getMessage());
+        }
+
+        // Answer is already stored in answers["qN"]. Return a REASON step so the service
+        // publishes PlanStepStartedEvent → SSE → progress visible in UI.
+        // Next call to plan() will advance to the next sub-question or synthesize.
+        return new SimplePlan(List.of(new SimplePlanStep(StepType.REASON, null,
+                labels.getSubQuestion() + (index + 1) + "] " + question, false)));
     }
 
     @SuppressWarnings("unchecked")
@@ -166,14 +189,18 @@ public class SelfAskPlanner implements Planner {
         Map<String, String> answers =
                 (Map<String, String>) session.getAttributes().getOrDefault(ANSWERS_KEY, Map.of());
 
-        StringBuilder context = new StringBuilder();
-        answers.forEach((k, v) -> context.append(k).append(": ").append(v).append("\n"));
-
         try {
             String synthesizeSystem = promptLoader.load(synthesizePromptPath, Map.of());
-            String userMsg = labels.getOriginalQuestion() + goal +
-                    labels.getCollectedAnswers() + context +
-                    labels.getGiveFinalAnswer();
+            String userMsg;
+            if (answers.isEmpty()) {
+                userMsg = labels.getOriginalQuestion() + goal + labels.getAnswerDirectly();
+            } else {
+                StringBuilder context = new StringBuilder();
+                answers.forEach((k, v) -> context.append(k).append(": ").append(v).append("\n"));
+                userMsg = labels.getOriginalQuestion() + goal +
+                        labels.getCollectedAnswers() + context +
+                        labels.getGiveFinalAnswer();
+            }
 
             String finalAnswer = chatClient.prompt(new Prompt(List.of(
                     new SystemMessage(synthesizeSystem),
@@ -184,7 +211,7 @@ public class SelfAskPlanner implements Planner {
 
         } catch (Exception e) {
             return new SimplePlan(List.of(SimplePlanStep.done(
-                    labels.getCollectedAnswers() + context)));
+                    answers.isEmpty() ? goal : String.valueOf(answers))));
         }
     }
 
@@ -214,9 +241,15 @@ public class SelfAskPlanner implements Planner {
         return s.strip();
     }
 
-    private String getGoal(IntentAnalysisResult intent) {
-        if (intent == null || intent.getIntents().isEmpty()) return "unknown";
-        Intent first = intent.getIntents().get(0);
-        return first.getName();
+    private String getGoal(SessionState session) {
+        if (session.getPlanState() != null) {
+            String g = session.getPlanState().getGoalDescription();
+            if (g != null && !g.isBlank()) return g;
+        }
+        List<Message> msgs = session.getMessages();
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            if (msgs.get(i).getRole() == Message.Role.USER) return msgs.get(i).getContent();
+        }
+        return "unknown";
     }
 }
