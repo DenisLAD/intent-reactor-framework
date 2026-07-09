@@ -82,6 +82,12 @@ public class IntentReactorProperties {
         private int charsPerToken = 4;
         private double triggerRatio = 0.85;
         private String summaryPrompt = "classpath:prompts/context-compression-ru.md";
+        /**
+         * Tool names whose {@code [TOOL_RESULT]} messages are dropped from the compression
+         * history. Useful for tools that produce large, low-value output (e.g. DOM snapshots).
+         * Configured per-application; core has no defaults.
+         */
+        private java.util.List<String> skipToolResultNames = new java.util.ArrayList<>();
     }
 
     @Getter

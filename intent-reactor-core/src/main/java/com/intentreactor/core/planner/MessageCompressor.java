@@ -109,8 +109,9 @@ public class MessageCompressor implements MessageContextPostProcessor {
         }
 
         String historyText = formatHistory(oldMessages);
+        String goal = extractGoal(session);
         String promptPath = properties.getPlanning().getContextWindow().getCompression().getSummaryPrompt();
-        String prompt = promptLoader.load(promptPath, Map.of("history", historyText));
+        String prompt = promptLoader.load(promptPath, Map.of("history", historyText, "goal", goal));
 
         try {
             String summary = chatClient.prompt().user(prompt).call().content();
@@ -128,12 +129,52 @@ public class MessageCompressor implements MessageContextPostProcessor {
         }
     }
 
+    /**
+     * Formats evicted messages for the compression prompt.
+     *
+     * <ul>
+     *   <li>Messages whose tool name appears in
+     *       {@code compression.skip-tool-result-names} are dropped entirely.</li>
+     *   <li>Remaining messages longer than {@value #MAX_TOOL_RESULT_CHARS} chars are truncated.</li>
+     * </ul>
+     */
     private String formatHistory(List<Message> messages) {
+        java.util.List<String> skipNames =
+                properties.getPlanning().getContextWindow().getCompression().getSkipToolResultNames();
         StringBuilder sb = new StringBuilder();
         for (Message m : messages) {
-            sb.append("[").append(m.getRole().name()).append("] ")
-              .append(m.getContent()).append("\n");
+            String content = m.getContent();
+            if (content == null) content = "";
+            if (!skipNames.isEmpty() && isSkippedToolResult(content, skipNames)) continue;
+            if (content.length() > MAX_TOOL_RESULT_CHARS) {
+                content = content.substring(0, MAX_TOOL_RESULT_CHARS) + "... [truncated]";
+            }
+            sb.append("[").append(m.getRole().name()).append("] ").append(content).append("\n");
         }
         return sb.toString();
     }
+
+    /**
+     * Returns {@code true} if {@code content} is a {@code [TOOL_RESULT]} message for one of the
+     * listed tool names.
+     */
+    private static boolean isSkippedToolResult(String content, java.util.List<String> skipNames) {
+        final String prefix = "[TOOL_RESULT] ";
+        if (!content.startsWith(prefix)) return false;
+        int colon = content.indexOf(':', prefix.length());
+        if (colon < 0) return false;
+        String toolName = content.substring(prefix.length(), colon).trim();
+        return skipNames.contains(toolName);
+    }
+
+    /** Extracts the user's goal from the first pinned USER message in the session. */
+    private static String extractGoal(SessionState session) {
+        return session.getMessages().stream()
+                .filter(m -> m.isPinned() && m.getRole() == Message.Role.USER)
+                .findFirst()
+                .map(m -> "Цель пользователя: " + m.getContent())
+                .orElse("не указана");
+    }
+
+    private static final int MAX_TOOL_RESULT_CHARS = 2000;
 }
