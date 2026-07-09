@@ -22,6 +22,7 @@ public class StrategiesProperties {
     private MapConfig map = new MapConfig();
     private HtpConfig htp = new HtpConfig();
     private KnowAgentConfig knowAgent = new KnowAgentConfig();
+    private SandConfig sand = new SandConfig();
 
     @Data
     public static class PromptsConfig {
@@ -77,6 +78,10 @@ public class StrategiesProperties {
         private String htpSynthesize         = "classpath:prompts/strategies/htp-synthesize.md";
         // KnowAgent
         private String knowagentEnrich       = "classpath:prompts/strategies/knowagent-enrich.md";
+        // SAND
+        private String sandCandidates        = "classpath:prompts/strategies/sand-candidates-ru.md";
+        private String sandPredict           = "classpath:prompts/strategies/sand-predict-ru.md";
+        private String sandEvaluate          = "classpath:prompts/strategies/sand-evaluate-ru.md";
     }
 
     @Data
@@ -211,5 +216,25 @@ public class StrategiesProperties {
     public static class KnowAgentConfig {
         private boolean enrichKnowledge = false;
         private boolean filterByPreconditions = true;
+    }
+
+    @Data
+    public static class SandConfig {
+        /** Total number of candidates to deliberate over (including delegate's proposal as candidate 0). */
+        private int numCandidates = 3;
+        /** Whether to call SimulatableTool.simulate() during prediction phase. */
+        private boolean useSimulation = true;
+        /**
+         * "llm"        — LLM predicts outcomes AND evaluates scores.
+         * "simulation" — SimulatableTool.simulate() provides outcome; score = 1.0 on success, 0.5 otherwise.
+         * "hybrid"     — SimulatableTool.simulate() for prediction when available; LLM evaluates all scores.
+         */
+        private String evaluationMethod = "hybrid";
+        /**
+         * Max entries retained in session.attributes["sand_training_log"]; oldest evicted first (FIFO).
+         * Note: intent-reactor-sand-train's SandDataCollector tracks progress by absolute list size,
+         * so eviction may cause it to miss entries once this cap is exceeded within a single long session.
+         */
+        private int maxTrainingLogEntries = 200;
     }
 }

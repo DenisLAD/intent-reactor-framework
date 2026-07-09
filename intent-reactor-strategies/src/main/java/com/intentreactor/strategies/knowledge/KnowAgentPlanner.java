@@ -9,6 +9,7 @@ import com.intentreactor.api.Planner;
 import com.intentreactor.api.SessionState;
 import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
+import com.intentreactor.core.MessageMarkers;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import com.intentreactor.strategies.config.StrategySessionKeys;
@@ -40,8 +41,9 @@ public class KnowAgentPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(KnowAgentPlanner.class);
 
-    private static final String KB_KEY          = StrategySessionKeys.KNOWAGENT_KB;
-    private static final String INITIALIZED_KEY = StrategySessionKeys.KNOWAGENT_INITIALIZED;
+    private static final String KB_KEY           = StrategySessionKeys.KNOWAGENT_KB;
+    private static final String INITIALIZED_KEY  = StrategySessionKeys.KNOWAGENT_INITIALIZED;
+    private static final String LAST_CONTEXT_KEY = StrategySessionKeys.KNOWAGENT_LAST_CONTEXT;
 
     private static final Pattern PRECONDITION_PATTERN =
             Pattern.compile("(?i)(requires?|needs?|must first|after calling|before|depends on)");
@@ -216,7 +218,11 @@ public class KnowAgentPlanner implements Planner {
             warnings.forEach(w -> sb.append("  - ").append(w).append("\n"));
         }
 
-        session.addMessage(Message.system(sb.toString()));
+        String content = sb.toString();
+        Object last = session.getAttributes().get(LAST_CONTEXT_KEY);
+        if (content.equals(last)) return;
+        session.getAttributes().put(LAST_CONTEXT_KEY, content);
+        session.addMessage(Message.system(content));
     }
 
     private Set<String> computeSatisfiedPostconditions(SessionState session,
@@ -224,7 +230,7 @@ public class KnowAgentPlanner implements Planner {
         Set<String> satisfied = new HashSet<>();
         for (Message msg : session.getMessages()) {
             if (msg.getRole() == Message.Role.SYSTEM && msg.getContent() != null
-                    && msg.getContent().startsWith("[TOOL_RESULT]")) {
+                    && msg.getContent().startsWith(MessageMarkers.TOOL_RESULT)) {
                 for (ToolKnowledge knowledge : kb.values()) {
                     if (msg.getContent().contains(knowledge.getToolName())) {
                         satisfied.addAll(knowledge.getPostconditions());
@@ -245,7 +251,7 @@ public class KnowAgentPlanner implements Planner {
         String lowerPre = precondition.toLowerCase();
         for (Message msg : session.getMessages()) {
             if (msg.getRole() == Message.Role.SYSTEM && msg.getContent() != null
-                    && msg.getContent().startsWith("[TOOL_RESULT]")) {
+                    && msg.getContent().startsWith(MessageMarkers.TOOL_RESULT)) {
                 String content = msg.getContent().toLowerCase();
                 String[] words = lowerPre.split("\\s+");
                 for (String word : words) {

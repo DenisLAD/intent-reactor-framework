@@ -44,7 +44,7 @@
 <dependency>
     <groupId>com.intentreactor</groupId>
     <artifactId>intent-reactor-spring-boot-starter</artifactId>
-    <version>0.1.14</version>
+    <version>0.1.16</version>
 </dependency>
 ```
 

@@ -14,6 +14,7 @@ import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.StepType;
 import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
+import com.intentreactor.core.config.IntentReactorProperties;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import com.intentreactor.strategies.config.StrategySessionKeys;
@@ -29,6 +30,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Self-Ask planner: decomposes the goal into sub-questions, answers each one (using tools where
@@ -51,17 +53,20 @@ public class SelfAskPlanner implements Planner {
     private final ToolProvider toolProvider;
     private final ObjectMapper objectMapper;
     private final int maxSubQuestions;
+    private final boolean autonomous;
     private final PromptLoader promptLoader = new PromptLoader();
     private final String decomposePromptPath;
     private final String synthesizePromptPath;
     private final StrategiesProperties.LabelsConfig labels;
 
     public SelfAskPlanner(ChatClient chatClient, ToolProvider toolProvider,
-                          ObjectMapper objectMapper, StrategiesProperties props) {
+                          ObjectMapper objectMapper, StrategiesProperties props,
+                          IntentReactorProperties intentReactorProperties) {
         this.chatClient = chatClient;
         this.toolProvider = toolProvider;
         this.objectMapper = objectMapper;
         this.maxSubQuestions = props.getSelfAsk().getMaxSubQuestions();
+        this.autonomous = intentReactorProperties.getPlanning().isAutonomous();
         this.decomposePromptPath = props.getPrompts().getSelfAskDecompose();
         this.synthesizePromptPath = props.getPrompts().getSelfAskSynthesize();
         this.labels = props.getLabels();
@@ -83,8 +88,11 @@ public class SelfAskPlanner implements Planner {
     @SuppressWarnings("unchecked")
     private Plan decompose(SessionState session, String goal) {
         try {
+            String toolsList = toolProvider.getAvailableTools(session).stream()
+                    .map(t -> t.getName() + ": " + t.getDescription())
+                    .collect(Collectors.joining("\n"));
             String system = promptLoader.load(decomposePromptPath,
-                    Map.of("max_questions", maxSubQuestions));
+                    Map.of("max_questions", maxSubQuestions, "tools", toolsList));
             String response = chatClient.prompt(new Prompt(List.of(
                     new SystemMessage(system),
                     new UserMessage(labels.getTask() + goal)
@@ -159,9 +167,20 @@ public class SelfAskPlanner implements Planner {
             List<Tool> tools = toolProvider.getAvailableTools(session);
             if (!tools.isEmpty()) {
                 session.addMessage(Message.system(labels.getSubQuestion() + (index + 1) + "] " + question));
-                Tool firstTool = tools.get(0);
-                Action action = new SimpleAction(firstTool.getName(), Map.of("query", question));
-                return new SimplePlan(List.of(SimplePlanStep.act(action, "Answer sub-question: " + question, false)));
+                String requestedToolName = (String) q.get("tool_name");
+                Tool selectedTool = tools.stream()
+                        .filter(t -> t.getName().equals(requestedToolName))
+                        .findFirst()
+                        .orElseGet(() -> {
+                            if (requestedToolName != null && !requestedToolName.isBlank()) {
+                                log.warn("[Self-Ask] Requested tool '{}' not available for sub-question {}, falling back to '{}'",
+                                        requestedToolName, index, tools.get(0).getName());
+                            }
+                            return tools.get(0);
+                        });
+                boolean needsConfirmation = selectedTool.isRisky() && !autonomous;
+                Action action = new SimpleAction(selectedTool.getName(), Map.of("query", question));
+                return new SimplePlan(List.of(SimplePlanStep.act(action, "Answer sub-question: " + question, needsConfirmation)));
             }
         }
 

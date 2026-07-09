@@ -13,6 +13,7 @@ import com.intentreactor.strategies.decomposition.LeastToMostPlanner;
 import com.intentreactor.strategies.decomposition.PlanAndSolvePlanner;
 import com.intentreactor.strategies.decomposition.SelfAskPlanner;
 import com.intentreactor.strategies.hierarchical.HTPPlanner;
+import com.intentreactor.strategies.deliberation.SANDPlanner;
 import com.intentreactor.strategies.knowledge.KnowAgentPlanner;
 import com.intentreactor.strategies.meta.SelfDiscoverPlanner;
 import com.intentreactor.strategies.meta.StormPlanner;
@@ -105,7 +106,7 @@ public class StrategiesAutoConfiguration {
                                   IntentReactorProperties props, ObjectMapper objectMapper,
                                   StrategiesProperties strategiesProperties) {
         ChatClient chatClient = chatClientBuilder.build();
-        return new SelfAskPlanner(chatClient, toolProvider, objectMapper, strategiesProperties);
+        return new SelfAskPlanner(chatClient, toolProvider, objectMapper, strategiesProperties, props);
     }
 
     @Bean
@@ -124,7 +125,7 @@ public class StrategiesAutoConfiguration {
                                        IntentReactorProperties props, ObjectMapper objectMapper,
                                        StrategiesProperties strategiesProperties) {
         ChatClient chatClient = chatClientBuilder.build();
-        return new PlanAndSolvePlanner(chatClient, toolProvider, objectMapper, strategiesProperties);
+        return new PlanAndSolvePlanner(chatClient, toolProvider, objectMapper, strategiesProperties, props);
     }
 
     @Bean
@@ -193,9 +194,10 @@ public class StrategiesAutoConfiguration {
     @ConditionalOnMissingBean(Planner.class)
     @ConditionalOnProperty(prefix = "intent-reactor.planning", name = "strategy", havingValue = "htp")
     public Planner htpPlanner(ChatClient.Builder chatClientBuilder, ToolProvider toolProvider,
-                              ObjectMapper objectMapper, StrategiesProperties strategiesProperties) {
+                              IntentReactorProperties props, ObjectMapper objectMapper,
+                              StrategiesProperties strategiesProperties) {
         ChatClient chatClient = chatClientBuilder.build();
-        return new HTPPlanner(chatClient, toolProvider, objectMapper, strategiesProperties);
+        return new HTPPlanner(chatClient, toolProvider, objectMapper, strategiesProperties, props);
     }
 
     @Bean
@@ -209,5 +211,18 @@ public class StrategiesAutoConfiguration {
         List<PromptContextProvider> providers = promptContextProviders != null ? promptContextProviders : List.of();
         Planner delegate = new DefaultReACTPlanner(chatClient, toolProvider, props, objectMapper, providers);
         return new KnowAgentPlanner(delegate, chatClient, toolProvider, objectMapper, strategiesProperties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(Planner.class)
+    @ConditionalOnProperty(prefix = "intent-reactor.planning", name = "strategy", havingValue = "sand")
+    public Planner sandPlanner(ChatClient.Builder chatClientBuilder, ToolProvider toolProvider,
+                               IntentReactorProperties props, ObjectMapper objectMapper,
+                               StrategiesProperties strategiesProperties,
+                               @Autowired(required = false) List<PromptContextProvider> promptContextProviders) {
+        ChatClient chatClient = chatClientBuilder.build();
+        List<PromptContextProvider> providers = promptContextProviders != null ? promptContextProviders : List.of();
+        Planner delegate = new DefaultReACTPlanner(chatClient, toolProvider, props, objectMapper, providers);
+        return new SANDPlanner(delegate, chatClient, objectMapper, toolProvider, strategiesProperties, props);
     }
 }

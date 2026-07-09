@@ -14,6 +14,8 @@ import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.StepType;
 import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
+import com.intentreactor.core.MessageMarkers;
+import com.intentreactor.core.config.IntentReactorProperties;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import com.intentreactor.strategies.config.StrategySessionKeys;
@@ -50,6 +52,7 @@ public class HTPPlanner implements Planner {
     private static final String STEP_IDX_KEY          = StrategySessionKeys.HTP_STEP_IDX;
     private static final String RESULTS_KEY           = StrategySessionKeys.HTP_RESULTS;
     private static final String REFINEMENT_COUNT_KEY  = StrategySessionKeys.HTP_REFINEMENT_COUNT;
+    private static final String NODE_MSG_START_KEY    = StrategySessionKeys.HTP_NODE_MSG_START;
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
@@ -58,6 +61,7 @@ public class HTPPlanner implements Planner {
     private final int maxStepsPerNode;
     private final boolean refinementEnabled;
     private final int maxRefinementRetries;
+    private final boolean autonomous;
     private final PromptLoader promptLoader = new PromptLoader();
     private final String decomposePromptPath;
     private final String planNodePromptPath;
@@ -66,7 +70,8 @@ public class HTPPlanner implements Planner {
     private final StrategiesProperties.LabelsConfig labels;
 
     public HTPPlanner(ChatClient chatClient, ToolProvider toolProvider,
-                      ObjectMapper objectMapper, StrategiesProperties props) {
+                      ObjectMapper objectMapper, StrategiesProperties props,
+                      IntentReactorProperties intentReactorProperties) {
         this.chatClient = chatClient;
         this.toolProvider = toolProvider;
         this.objectMapper = objectMapper;
@@ -75,6 +80,7 @@ public class HTPPlanner implements Planner {
         this.maxStepsPerNode = cfg.getMaxStepsPerNode();
         this.refinementEnabled = cfg.isRefinementEnabled();
         this.maxRefinementRetries = cfg.getMaxRefinementRetries();
+        this.autonomous = intentReactorProperties.getPlanning().isAutonomous();
         this.decomposePromptPath = props.getPrompts().getHtpDecompose();
         this.planNodePromptPath = props.getPrompts().getHtpPlanNode();
         this.refinePromptPath = props.getPrompts().getHtpRefine();
@@ -167,7 +173,7 @@ public class HTPPlanner implements Planner {
 
             List<Map<String, Object>> steps = parseList(response);
             if (steps.isEmpty()) {
-                session.getAttributes().put(SUBGOAL_IDX_KEY, idx + 1);
+                recordSubgoalResult(session, idx, "Subgoal skipped: empty plan");
                 session.getAttributes().put(REFINEMENT_COUNT_KEY, 0);
                 return planNode(session, goal, "");
             }
@@ -177,13 +183,14 @@ public class HTPPlanner implements Planner {
             session.getAttributes().put(STEP_IDX_KEY, 0);
             session.getAttributes().put(PHASE_KEY, "EXECUTE_STEPS");
             session.getAttributes().put(REFINEMENT_COUNT_KEY, 0);
+            session.getAttributes().put(NODE_MSG_START_KEY, session.getMessages().size());
 
             log.debug("[HTP] Planned {} steps for sub-goal {} for session {}", steps.size(), idx + 1, session.getId());
             return executeNextStep(session, goal);
 
         } catch (Exception e) {
             log.warn("[HTP] Node planning failed: {}", e.getMessage());
-            session.getAttributes().put(SUBGOAL_IDX_KEY, idx + 1);
+            recordSubgoalResult(session, idx, "Subgoal failed: " + e.getMessage());
             return planNode(session, goal, "");
         }
     }
@@ -199,7 +206,7 @@ public class HTPPlanner implements Planner {
             Message last = messages.get(messages.size() - 1);
             if (last.getRole() == Message.Role.SYSTEM) {
                 String content = last.getContent();
-                boolean failed = content != null && content.startsWith("ERROR:");
+                boolean failed = content != null && content.startsWith(MessageMarkers.TOOL_ERROR);
                 if (failed && refinementEnabled) {
                     return tryRefine(session, goal, content);
                 }
@@ -232,9 +239,10 @@ public class HTPPlanner implements Planner {
         }
 
         boolean isRisky = tools.stream().anyMatch(t -> t.getName().equals(toolName) && t.isRisky());
+        boolean needsConfirmation = isRisky && !autonomous;
         Action action = new SimpleAction(toolName, parameters);
         log.debug("[HTP] Executing step {}/{} for session {}", stepIdx + 1, steps.size(), session.getId());
-        return new SimplePlan(List.of(SimplePlanStep.act(action, actionDesc, isRisky)));
+        return new SimplePlan(List.of(SimplePlanStep.act(action, actionDesc, needsConfirmation)));
     }
 
     @SuppressWarnings("unchecked")
@@ -283,16 +291,30 @@ public class HTPPlanner implements Planner {
         return planNode(session, goal, "");
     }
 
-    @SuppressWarnings("unchecked")
     private void collectSubgoalResult(SessionState session, String goal) {
         int idx = (int) session.getAttributes().getOrDefault(SUBGOAL_IDX_KEY, 0);
+        int start = (int) session.getAttributes().getOrDefault(NODE_MSG_START_KEY, 0);
+        List<Message> messages = session.getMessages();
+        int from = Math.min(start, messages.size());
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = from; i < messages.size(); i++) {
+            Message m = messages.get(i);
+            if (m.getRole() == Message.Role.SYSTEM && m.getContent() != null
+                    && (m.getContent().startsWith(MessageMarkers.TOOL_RESULT)
+                        || m.getContent().startsWith(MessageMarkers.TOOL_ERROR))) {
+                sb.append(m.getContent()).append("\n");
+            }
+        }
+        String result = sb.length() > 0 ? sb.toString().trim() : "Completed";
+        recordSubgoalResult(session, idx, result);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void recordSubgoalResult(SessionState session, int idx, String text) {
         Map<String, String> results =
                 (Map<String, String>) session.getAttributes().computeIfAbsent(RESULTS_KEY, k -> new LinkedHashMap<>());
-
-        List<Message> messages = session.getMessages();
-        String result = messages.isEmpty() ? "Completed"
-                : messages.get(messages.size() - 1).getContent();
-        results.put("subgoal-" + (idx + 1), result);
+        results.put("subgoal-" + (idx + 1), text);
         session.getAttributes().put(RESULTS_KEY, results);
         session.getAttributes().put(SUBGOAL_IDX_KEY, idx + 1);
     }

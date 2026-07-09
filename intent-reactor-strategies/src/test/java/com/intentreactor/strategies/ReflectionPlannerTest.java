@@ -9,6 +9,9 @@ import com.intentreactor.api.SessionState;
 import com.intentreactor.api.SimplePlan;
 import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.StepType;
+import com.intentreactor.api.ToolProvider;
+import com.intentreactor.core.config.IntentReactorProperties;
+import com.intentreactor.core.planner.DefaultReACTPlanner;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import com.intentreactor.strategies.refinement.ReflectionPlanner;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,6 +47,15 @@ class ReflectionPlannerTest {
     private ChatClient.ChatClientRequestSpec requestSpec;
     @Mock
     private ChatClient.CallResponseSpec callResponseSpec;
+
+    @Mock
+    private ChatClient delegateChatClient;
+    @Mock
+    private ChatClient.ChatClientRequestSpec delegateRequestSpec;
+    @Mock
+    private ChatClient.CallResponseSpec delegateResponseSpec;
+    @Mock
+    private ToolProvider toolProvider;
 
     private SessionState session;
     private IntentAnalysisResult intent;
@@ -123,5 +135,33 @@ class ReflectionPlannerTest {
         reset(chatClient);
         planner.plan(session, intent);
         verifyNoInteractions(chatClient);
+    }
+
+    @Test
+    void reflection_realDelegateReasonDonePlan_triggersCriticAndAcceptsHighScore() {
+        // Real DefaultReACTPlanner emits [REASON(thought), DONE] — the shape the
+        // steps().get(0).type() != DONE bug used to miss entirely.
+        when(delegateChatClient.prompt(any(Prompt.class))).thenReturn(delegateRequestSpec);
+        when(delegateRequestSpec.call()).thenReturn(delegateResponseSpec);
+        when(delegateResponseSpec.content()).thenReturn(
+                "{\"thought\": \"I have the answer\", \"done\": true, \"finalMessage\": \"Final answer text\"}");
+        when(toolProvider.getAvailableTools(any(SessionState.class))).thenReturn(List.of());
+
+        IntentReactorProperties realProps = new IntentReactorProperties();
+        Planner realDelegate = new DefaultReACTPlanner(delegateChatClient, toolProvider, realProps, objectMapper);
+
+        when(callResponseSpec.content()).thenReturn(
+                "{\"score\": 0.95, \"satisfied\": true, \"critique\": \"\", \"improvement\": \"\"}");
+
+        Planner planner = new ReflectionPlanner(realDelegate, chatClient, objectMapper, props);
+        Plan result = planner.plan(session, intent);
+
+        assertThat(result.steps()).hasSize(2);
+        assertThat(result.steps().get(0).type()).isEqualTo(StepType.REASON);
+        assertThat(result.steps().get(1).type()).isEqualTo(StepType.DONE);
+        assertThat(result.steps().get(1).description()).isEqualTo("Final answer text");
+
+        // Before the fix, steps().get(0).type() == REASON != DONE meant this critic call never happened.
+        verify(chatClient, times(1)).prompt(any(Prompt.class));
     }
 }

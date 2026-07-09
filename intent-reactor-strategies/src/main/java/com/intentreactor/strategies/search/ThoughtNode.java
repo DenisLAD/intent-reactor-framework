@@ -20,6 +20,7 @@ public class ThoughtNode {
     private String parentId;
     private List<String> childIds = new ArrayList<>();
     private boolean terminal = false;
+    private boolean exhausted = false;
 
     public ThoughtNode() {
     }

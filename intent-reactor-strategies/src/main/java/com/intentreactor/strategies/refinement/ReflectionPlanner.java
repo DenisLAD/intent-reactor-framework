@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.intentreactor.api.IntentAnalysisResult;
 import com.intentreactor.api.Message;
 import com.intentreactor.api.Plan;
+import com.intentreactor.api.PlanStep;
 import com.intentreactor.api.Planner;
 import com.intentreactor.api.SessionState;
 import com.intentreactor.api.StepType;
@@ -19,6 +20,7 @@ import org.springframework.ai.chat.prompt.Prompt;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Generator+Critic Reflection decorator: when the delegate produces a DONE step, this planner
@@ -61,9 +63,13 @@ public class ReflectionPlanner implements Planner {
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         Plan plan = delegate.plan(session, intent);
 
-        if (plan.steps().isEmpty() || plan.steps().get(0).type() != StepType.DONE) {
+        Optional<PlanStep> doneStepOpt = plan.steps().stream()
+                .filter(s -> s.type() == StepType.DONE)
+                .findFirst();
+        if (doneStepOpt.isEmpty()) {
             return plan;
         }
+        PlanStep doneStep = doneStepOpt.get();
 
         int reflectionCount = (int) session.getAttributes().getOrDefault(REFLECTION_COUNT_KEY, 0);
         if (reflectionCount >= maxIterations) {
@@ -71,7 +77,7 @@ public class ReflectionPlanner implements Planner {
             return plan;
         }
 
-        String finalAnswer = plan.steps().get(0).description();
+        String finalAnswer = doneStep.description();
         String goal = session.getPlanState() != null && session.getPlanState().getGoalDescription() != null
                 ? session.getPlanState().getGoalDescription() : "";
 
@@ -89,7 +95,7 @@ public class ReflectionPlanner implements Planner {
 
             CriticResult result = parseCriticResponse(criticResponse);
 
-            if (result.satisfied || result.score >= satisfactionThreshold) {
+            if (result.score >= satisfactionThreshold) {
                 log.debug("[Reflection] Satisfied with score={} for session {}", result.score, session.getId());
                 return plan;
             }

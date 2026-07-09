@@ -38,7 +38,9 @@ public class RetrevalTree {
         List<RetrevalNode> path = new ArrayList<>();
         RetrevalNode node = nodes.get(currentNodeId);
         while (node != null) {
-            path.add(0, node);
+            if ("VALIDATED".equals(node.getState()) || "DONE".equals(node.getState())) {
+                path.add(0, node);
+            }
             node = node.getParentId() != null ? nodes.get(node.getParentId()) : null;
         }
         return path;

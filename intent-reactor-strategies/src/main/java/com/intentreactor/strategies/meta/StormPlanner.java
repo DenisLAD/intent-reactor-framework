@@ -44,6 +44,7 @@ public class StormPlanner implements Planner {
     private static final String PERSPECTIVES_KEY   = StrategySessionKeys.STORM_PERSPECTIVES;
     private static final String PERSONA_INDEX_KEY  = StrategySessionKeys.STORM_PERSONA_INDEX;
     private static final String RESEARCH_STEPS_KEY = StrategySessionKeys.STORM_RESEARCH_STEPS;
+    private static final String GOAL_KEY           = StrategySessionKeys.STORM_GOAL;
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
@@ -71,8 +72,18 @@ public class StormPlanner implements Planner {
 
     @Override
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
-        String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "PERSPECTIVES");
         String goal = getGoal(session);
+
+        String storedGoal = (String) session.getAttributes().getOrDefault(GOAL_KEY, "");
+        if (!storedGoal.equals(goal)) {
+            session.getAttributes().remove(PERSPECTIVES_KEY);
+            session.getAttributes().remove(PERSONA_INDEX_KEY);
+            session.getAttributes().remove(RESEARCH_STEPS_KEY);
+            session.getAttributes().put(PHASE_KEY, "PERSPECTIVES");
+            session.getAttributes().put(GOAL_KEY, goal);
+        }
+
+        String phase = (String) session.getAttributes().getOrDefault(PHASE_KEY, "PERSPECTIVES");
 
         return switch (phase) {
             case "PERSPECTIVES" -> generatePerspectives(session, goal);
@@ -111,13 +122,18 @@ public class StormPlanner implements Planner {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private Plan researchNext(SessionState session, String goal) {
+        collectPreviousResult(session);
+        return dispatchResearch(session, goal);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void collectPreviousResult(SessionState session) {
         List<StormPerspective> perspectives = loadPerspectives(session);
         int personaIndex = (int) session.getAttributes().getOrDefault(PERSONA_INDEX_KEY, 0);
         int researchSteps = (int) session.getAttributes().getOrDefault(RESEARCH_STEPS_KEY, 0);
 
-        if (researchSteps > 0 && personaIndex > 0) {
+        if (researchSteps > 0 && personaIndex > 0 && !perspectives.isEmpty()) {
             List<Message> messages = session.getMessages();
             if (!messages.isEmpty()) {
                 Message last = messages.get(messages.size() - 1);
@@ -128,6 +144,13 @@ public class StormPlanner implements Planner {
                 }
             }
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Plan dispatchResearch(SessionState session, String goal) {
+        List<StormPerspective> perspectives = loadPerspectives(session);
+        int personaIndex = (int) session.getAttributes().getOrDefault(PERSONA_INDEX_KEY, 0);
+        int researchSteps = (int) session.getAttributes().getOrDefault(RESEARCH_STEPS_KEY, 0);
 
         if (researchSteps >= maxResearchSteps || personaIndex >= perspectives.size() * 2) {
             session.getAttributes().put(PHASE_KEY, "SYNTHESIZE");
@@ -154,16 +177,22 @@ public class StormPlanner implements Planner {
             ))).call().content();
 
             ResearchAction ra = parseResearchAction(response);
+            boolean toolExists = ra.toolName != null
+                    && tools.stream().anyMatch(t -> t.getName().equals(ra.toolName));
+
+            if (!toolExists) {
+                session.getAttributes().put(RESEARCH_STEPS_KEY, researchSteps + 1);
+                log.debug("[STORM] Persona '{}' proposed unavailable tool '{}', retrying without " +
+                                "advancing persona index for session {}",
+                        persona.getName(), ra.toolName, session.getId());
+                return dispatchResearch(session, goal);
+            }
+
             session.getAttributes().put(PERSONA_INDEX_KEY, personaIndex + 1);
             session.getAttributes().put(RESEARCH_STEPS_KEY, researchSteps + 1);
 
             log.debug("[STORM] Persona '{}' researching, step {}/{} for session {}",
                     persona.getName(), researchSteps + 1, maxResearchSteps, session.getId());
-
-            boolean toolExists = tools.stream().anyMatch(t -> t.getName().equals(ra.toolName));
-            if (!toolExists || ra.toolName == null) {
-                return researchNext(session, goal);
-            }
 
             Action action = new SimpleAction(ra.toolName, ra.parameters);
             return new SimplePlan(List.of(SimplePlanStep.act(action,

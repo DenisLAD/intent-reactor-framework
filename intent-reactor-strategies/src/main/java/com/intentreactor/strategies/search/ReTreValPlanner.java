@@ -63,6 +63,7 @@ public class ReTreValPlanner implements Planner {
     private static final String CUR_NODE_KEY  = StrategySessionKeys.RETREVAL_CUR_NODE;
     private static final String PATTERNS_KEY  = StrategySessionKeys.RETREVAL_PATTERNS;
     private static final String BACKTRACK_KEY = StrategySessionKeys.RETREVAL_BACKTRACK;
+    private static final String GOAL_KEY      = StrategySessionKeys.RETREVAL_GOAL;
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
@@ -114,6 +115,18 @@ public class ReTreValPlanner implements Planner {
     public Plan plan(SessionState session, IntentAnalysisResult intent) {
         String goal = getGoal(intent, session);
 
+        String storedGoal = (String) session.getAttributes().getOrDefault(GOAL_KEY, "");
+        if (!storedGoal.equals(goal)) {
+            // Goal changed within the session — reset search state. retreval_patterns is
+            // intentionally preserved: it is cross-goal memory of successful/failed reasoning steps.
+            session.getAttributes().remove(TREE_KEY);
+            session.getAttributes().remove(FRONTIER_KEY);
+            session.getAttributes().remove(CUR_NODE_KEY);
+            session.getAttributes().remove(BACKTRACK_KEY);
+            session.getAttributes().put(PHASE_KEY, "EXPAND");
+            session.getAttributes().put(GOAL_KEY, goal);
+        }
+
         RetrevalTree tree = loadTree(session);
         if (tree == null) {
             tree = RetrevalTree.withRoot(goal);
@@ -152,13 +165,22 @@ public class ReTreValPlanner implements Planner {
             node.setToolObservation(last.getContent());
             List<String> frontier = (List<String>) session.getAttributes()
                     .computeIfAbsent(FRONTIER_KEY, k -> new ArrayList<>());
-            if (!frontier.contains(curNodeId)) {
-                frontier.add(0, curNodeId);
-                while (frontier.size() > beamWidth) frontier.remove(frontier.size() - 1);
-            }
+            maintainFrontier(frontier, curNodeId, tree, beamWidth);
             session.getAttributes().put(FRONTIER_KEY, frontier);
             saveTree(session, tree);
         }
+    }
+
+    /** Keeps the frontier as the top-{@code beamWidth} node IDs by (self+critic)/2 score. */
+    private void maintainFrontier(List<String> frontier, String candidateId, RetrevalTree tree, int beamWidth) {
+        if (candidateId != null && !frontier.contains(candidateId)) frontier.add(candidateId);
+        frontier.sort(Comparator.comparingDouble((String id) -> frontierScore(tree, id)).reversed());
+        while (frontier.size() > beamWidth) frontier.remove(frontier.size() - 1);
+    }
+
+    private double frontierScore(RetrevalTree tree, String id) {
+        RetrevalNode n = tree.getNodes().get(id);
+        return n != null ? (n.getSelfScore() + n.getCriticScore()) / 2.0 : Double.NEGATIVE_INFINITY;
     }
 
     @SuppressWarnings("unchecked")
@@ -300,20 +322,18 @@ public class ReTreValPlanner implements Planner {
 
                 if (parentNode != null && parentNode.getParentId() != null) {
                     String grandparentId = parentNode.getParentId();
-                    if (!frontier.contains(grandparentId)) {
-                        frontier.add(0, grandparentId);
-                        session.getAttributes().put(FRONTIER_KEY, frontier);
-                    }
+                    maintainFrontier(frontier, grandparentId, tree, beamWidth);
+                    session.getAttributes().put(FRONTIER_KEY, frontier);
                 }
                 saveTree(session, tree);
                 return expand(session, goal, tree, backtrackDepth + 1);
             }
 
-            // Add remaining validated siblings to frontier (beam management)
+            // Add remaining validated siblings to frontier (beam management, score-based top-K)
             List<RetrevalNode> siblings = validated.size() > 1
                     ? validated.subList(1, validated.size()) : List.of();
             for (RetrevalNode sib : siblings) {
-                if (frontier.size() < beamWidth) frontier.add(sib.getId());
+                maintainFrontier(frontier, sib.getId(), tree, beamWidth);
             }
             session.getAttributes().put(FRONTIER_KEY, frontier);
             session.getAttributes().remove(BACKTRACK_KEY);
@@ -329,10 +349,7 @@ public class ReTreValPlanner implements Planner {
             if (!toolExists) {
                 // REASON step: no tool result follows, so add node to frontier directly
                 // so the next plan() call will expand its children
-                if (!frontier.contains(bestNode.getId())) {
-                    frontier.add(0, bestNode.getId());
-                    while (frontier.size() > beamWidth) frontier.remove(frontier.size() - 1);
-                }
+                maintainFrontier(frontier, bestNode.getId(), tree, beamWidth);
                 session.getAttributes().put(FRONTIER_KEY, frontier);
                 session.getAttributes().remove(CUR_NODE_KEY);
                 return new SimplePlan(List.of(

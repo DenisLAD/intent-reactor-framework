@@ -87,6 +87,15 @@ public class LeastToMostPlanner implements Planner {
             List<Map<String, Object>> tasks = parseTasks(response);
             if (tasks.size() > maxSubproblems) tasks = tasks.subList(0, maxSubproblems);
 
+            if (tasks.isEmpty()) {
+                log.info("[LeastToMost] No sub-problems for session {}, answering directly", session.getId());
+                session.getAttributes().put(TASKS_KEY, tasks);
+                session.getAttributes().put(RESULTS_KEY, new LinkedHashMap<>());
+                session.getAttributes().put(INDEX_KEY, 0);
+                session.getAttributes().put(PHASE_KEY, "SOLVE");
+                return synthesizeFinal(session, goal, new LinkedHashMap<>());
+            }
+
             session.getAttributes().put(TASKS_KEY, tasks);
             session.getAttributes().put(RESULTS_KEY, new LinkedHashMap<>());
             session.getAttributes().put(INDEX_KEY, 0);
@@ -109,24 +118,12 @@ public class LeastToMostPlanner implements Planner {
                 (Map<String, String>) session.getAttributes().get(RESULTS_KEY);
         int index = (int) session.getAttributes().getOrDefault(INDEX_KEY, 0);
 
-        if (index > 0) {
-            List<Message> messages = session.getMessages();
-            if (!messages.isEmpty()) {
-                Message last = messages.get(messages.size() - 1);
-                if (last.getRole() == Message.Role.SYSTEM || last.getRole() == Message.Role.ASSISTANT) {
-                    results.put(String.valueOf(index - 1), last.getContent());
-                    session.getAttributes().put(RESULTS_KEY, results);
-                }
-            }
-        }
-
         if (index >= tasks.size()) {
             return synthesizeFinal(session, goal, results);
         }
 
         Map<String, Object> task = tasks.get(index);
         String taskDesc = (String) task.get("task");
-        session.getAttributes().put(INDEX_KEY, index + 1);
 
         StringBuilder context = new StringBuilder();
         if (!results.isEmpty()) {
@@ -135,11 +132,26 @@ public class LeastToMostPlanner implements Planner {
             results.forEach((k, v) -> context.append(subLabel).append(k).append(": ").append(v).append("\n"));
         }
 
-        session.addMessage(Message.system(labels.getSubtask() + (index + 1) + "/" + tasks.size() + "] " + taskDesc));
-        log.debug("[LeastToMost] Solving task {}/{} for session {}", index + 1, tasks.size(), session.getId());
+        String answer;
+        try {
+            String solveSystem = promptLoader.load(solvePromptPath, Map.of());
+            String userMsg = labels.getSubtask() + (index + 1) + "/" + tasks.size() + "] " + taskDesc + context;
+            answer = chatClient.prompt(new Prompt(List.of(
+                    new SystemMessage(solveSystem),
+                    new UserMessage(userMsg)
+            ))).call().content();
+        } catch (Exception e) {
+            log.warn("[LeastToMost] Solve failed for task {}: {}", index, e.getMessage());
+            answer = "";
+        }
+
+        results.put(String.valueOf(index), answer);
+        session.getAttributes().put(RESULTS_KEY, results);
+        session.getAttributes().put(INDEX_KEY, index + 1);
+        log.debug("[LeastToMost] Solved task {}/{} for session {}", index + 1, tasks.size(), session.getId());
 
         return new SimplePlan(List.of(new SimplePlanStep(StepType.REASON, null,
-                "Solving: " + taskDesc + context, false)));
+                "Solved: " + taskDesc, false)));
     }
 
     private Plan synthesizeFinal(SessionState session, String goal, Map<String, String> results) {

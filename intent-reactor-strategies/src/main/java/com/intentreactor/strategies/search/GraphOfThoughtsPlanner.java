@@ -37,6 +37,7 @@ public class GraphOfThoughtsPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(GraphOfThoughtsPlanner.class);
     private static final String GRAPH_KEY = StrategySessionKeys.GOT_GRAPH;
+    private static final String GOAL_KEY  = StrategySessionKeys.GOT_GOAL;
 
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
@@ -111,27 +112,42 @@ public class GraphOfThoughtsPlanner implements Planner {
         switch (op.operation) {
             case "GENERATE" -> {
                 String parentId = (op.sourceIds != null && !op.sourceIds.isEmpty())
-                        ? op.sourceIds.get(0) : graph.getRootId();
-                graph.addNode(op.content, parentId);
+                        ? resolveId(graph, op.sourceIds.get(0)) : null;
+                graph.addNode(op.content, parentId != null ? parentId : graph.getRootId());
             }
             case "AGGREGATE" -> {
                 if (op.sourceIds != null && op.sourceIds.size() >= 2) {
-                    graph.aggregate(op.sourceIds, op.content);
+                    List<String> resolved = op.sourceIds.stream()
+                            .map(id -> resolveId(graph, id))
+                            .filter(java.util.Objects::nonNull)
+                            .collect(Collectors.toList());
+                    if (resolved.size() >= 2) {
+                        graph.aggregate(resolved, op.content);
+                    }
                 }
             }
             case "REFINE" -> {
                 if (op.sourceIds != null && !op.sourceIds.isEmpty()) {
-                    ThoughtNode node = graph.getNodes().get(op.sourceIds.get(0));
+                    ThoughtNode node = graph.getNodes().get(resolveId(graph, op.sourceIds.get(0)));
                     if (node != null) node.setContent(op.content);
                 }
             }
             case "SCORE" -> {
                 if (op.sourceIds != null && !op.sourceIds.isEmpty() && op.score != null) {
-                    ThoughtNode node = graph.getNodes().get(op.sourceIds.get(0));
+                    ThoughtNode node = graph.getNodes().get(resolveId(graph, op.sourceIds.get(0)));
                     if (node != null) node.setScore(op.score);
                 }
             }
         }
+    }
+
+    private String resolveId(ThoughtGraph graph, String ref) {
+        if (ref == null) return null;
+        if (graph.getNodes().containsKey(ref)) return ref;
+        return graph.getNodes().keySet().stream()
+                .filter(k -> k.startsWith(ref))
+                .findFirst()
+                .orElse(null);
     }
 
     private String buildGraphSummary(ThoughtGraph graph) {
@@ -168,13 +184,16 @@ public class GraphOfThoughtsPlanner implements Planner {
 
     private ThoughtGraph loadOrCreateGraph(SessionState session, String goal) {
         Object raw = session.getAttributes().get(GRAPH_KEY);
-        if (raw != null) {
+        String storedGoal = (String) session.getAttributes().get(GOAL_KEY);
+        if (raw != null && goal.equals(storedGoal)) {
             try {
                 return objectMapper.convertValue(raw, ThoughtGraph.class);
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                log.warn("[GoT] Failed to deserialize graph, recreating: {}", e.getMessage());
             }
         }
         ThoughtGraph graph = ThoughtGraph.withRoot(goal);
+        session.getAttributes().put(GOAL_KEY, goal);
         saveGraph(session, graph);
         return graph;
     }

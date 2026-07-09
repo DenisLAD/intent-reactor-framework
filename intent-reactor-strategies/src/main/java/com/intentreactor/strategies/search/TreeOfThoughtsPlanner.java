@@ -43,6 +43,7 @@ public class TreeOfThoughtsPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(TreeOfThoughtsPlanner.class);
     private static final String TREE_KEY = StrategySessionKeys.TOT_TREE;
+    private static final String GOAL_KEY = StrategySessionKeys.TOT_GOAL;
 
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
@@ -108,9 +109,19 @@ public class TreeOfThoughtsPlanner implements Planner {
             }
         }
 
+        if (newThoughts.isEmpty()) {
+            current.setExhausted(true);
+            log.debug("[ToT] Node exhausted (empty thought generation) at depth={} for session {}",
+                    current.getDepth(), session.getId());
+        }
+
         saveTree(session, tree);
 
         if (bestNode != null && bestNode.getDepth() >= maxDepth) {
+            return new SimplePlan(List.of(SimplePlanStep.done(synthesizeBestPath(tree, goal))));
+        }
+
+        if (bestNode == null && selectFrontier(tree).isEmpty()) {
             return new SimplePlan(List.of(SimplePlanStep.done(synthesizeBestPath(tree, goal))));
         }
 
@@ -123,7 +134,7 @@ public class TreeOfThoughtsPlanner implements Planner {
 
     private List<ThoughtNode> selectFrontier(ThoughtGraph tree) {
         List<ThoughtNode> leaves = tree.getNodes().values().stream()
-                .filter(n -> n.getChildIds().isEmpty() && !n.isTerminal() && n.getDepth() < maxDepth)
+                .filter(n -> n.getChildIds().isEmpty() && !n.isTerminal() && !n.isExhausted() && n.getDepth() < maxDepth)
                 .collect(Collectors.toList());
 
         if (leaves.isEmpty()) return List.of();
@@ -213,13 +224,16 @@ public class TreeOfThoughtsPlanner implements Planner {
 
     private ThoughtGraph loadOrCreateTree(SessionState session, String goal) {
         Object raw = session.getAttributes().get(TREE_KEY);
-        if (raw != null) {
+        String storedGoal = (String) session.getAttributes().get(GOAL_KEY);
+        if (raw != null && goal.equals(storedGoal)) {
             try {
                 return objectMapper.convertValue(raw, ThoughtGraph.class);
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                log.warn("[ToT] Failed to deserialize tree, recreating: {}", e.getMessage());
             }
         }
         ThoughtGraph tree = ThoughtGraph.withRoot(goal);
+        session.getAttributes().put(GOAL_KEY, goal);
         saveTree(session, tree);
         return tree;
     }

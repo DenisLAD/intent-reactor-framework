@@ -126,15 +126,21 @@ public class LATSPlanner implements Planner {
 
             for (int i = 0; i < cfg.getMaxIterations(); i++) {
                 SearchNode leaf = tree.selectLeaf(cfg.getExplorationConstant());
-                if (leaf.getChildren().isEmpty()) {
+                int limit = cfg.getBranchingFactor();
+                if (leaf.getChildren().size() < limit) {
                     List<Action> actions = nodeEvaluator.generateActions(leaf);
                     if (actions.isEmpty()) {
-                        tree.backpropagate(leaf, 0.0);
-                        continue;
+                        if (leaf.getChildren().isEmpty()) {
+                            tree.backpropagate(leaf, 0.0);
+                            continue;
+                        }
+                        // LLM proposed nothing new but the node already has children — fall through
+                        // to simulate the existing ones instead of stalling.
+                    } else {
+                        int remaining = limit - leaf.getChildren().size();
+                        List<Action> bounded = actions.size() > remaining ? actions.subList(0, remaining) : actions;
+                        tree.expand(leaf, bounded);
                     }
-                    int limit = cfg.getBranchingFactor();
-                    List<Action> bounded = actions.size() > limit ? actions.subList(0, limit) : actions;
-                    tree.expand(leaf, bounded);
                 }
                 for (SearchNode child : leaf.getChildren()) {
                     double reward = simulate(child, tools, cfg);

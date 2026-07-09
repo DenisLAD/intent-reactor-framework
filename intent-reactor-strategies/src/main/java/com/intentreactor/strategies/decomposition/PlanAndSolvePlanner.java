@@ -14,6 +14,7 @@ import com.intentreactor.api.SimplePlanStep;
 import com.intentreactor.api.StepType;
 import com.intentreactor.api.Tool;
 import com.intentreactor.api.ToolProvider;
+import com.intentreactor.core.config.IntentReactorProperties;
 import com.intentreactor.core.util.PromptLoader;
 import com.intentreactor.strategies.config.StrategiesProperties;
 import com.intentreactor.strategies.config.StrategySessionKeys;
@@ -41,25 +42,29 @@ public class PlanAndSolvePlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(PlanAndSolvePlanner.class);
 
-    private static final String PHASE_KEY = StrategySessionKeys.PAS_PHASE;
-    private static final String PLAN_KEY  = StrategySessionKeys.PAS_PLAN;
-    private static final String STEP_KEY  = StrategySessionKeys.PAS_STEP;
-    private static final String GOAL_KEY  = StrategySessionKeys.PAS_GOAL;
+    private static final String PHASE_KEY    = StrategySessionKeys.PAS_PHASE;
+    private static final String PLAN_KEY     = StrategySessionKeys.PAS_PLAN;
+    private static final String STEP_KEY     = StrategySessionKeys.PAS_STEP;
+    private static final String GOAL_KEY     = StrategySessionKeys.PAS_GOAL;
+    private static final String MSG_START_KEY = StrategySessionKeys.PAS_MSG_START;
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
     private final ObjectMapper objectMapper;
     private final int maxPlanSteps;
+    private final boolean autonomous;
     private final PromptLoader promptLoader = new PromptLoader();
     private final String planPromptPath;
     private final StrategiesProperties.LabelsConfig labels;
 
     public PlanAndSolvePlanner(ChatClient chatClient, ToolProvider toolProvider,
-                               ObjectMapper objectMapper, StrategiesProperties props) {
+                               ObjectMapper objectMapper, StrategiesProperties props,
+                               IntentReactorProperties intentReactorProperties) {
         this.chatClient = chatClient;
         this.toolProvider = toolProvider;
         this.objectMapper = objectMapper;
         this.maxPlanSteps = props.getPlanAndSolve().getMaxPlanSteps();
+        this.autonomous = intentReactorProperties.getPlanning().isAutonomous();
         this.planPromptPath = props.getPrompts().getPlanAndSolvePlan();
         this.labels = props.getLabels();
     }
@@ -101,6 +106,7 @@ public class PlanAndSolvePlanner implements Planner {
             session.getAttributes().put(PLAN_KEY, steps);
             session.getAttributes().put(STEP_KEY, 0);
             session.getAttributes().put(PHASE_KEY, "EXECUTING");
+            session.getAttributes().put(MSG_START_KEY, session.getMessages().size());
 
             log.debug("[PlanAndSolve] Generated {}-step plan for session {}", steps.size(), session.getId());
             return executeNextStep(session);
@@ -141,6 +147,7 @@ public class PlanAndSolvePlanner implements Planner {
         List<Tool> tools = toolProvider.getAvailableTools(session);
         boolean toolExists = tools.stream().anyMatch(t -> t.getName().equals(toolName));
         boolean isRisky = tools.stream().anyMatch(t -> t.getName().equals(toolName) && t.isRisky());
+        boolean needsConfirmation = isRisky && !autonomous;
 
         if (!toolExists) {
             session.getAttributes().put(STEP_KEY, stepIndex + 1);
@@ -148,14 +155,17 @@ public class PlanAndSolvePlanner implements Planner {
         }
 
         Action action = new SimpleAction(toolName, parameters);
-        return new SimplePlan(List.of(SimplePlanStep.act(action, description, isRisky)));
+        return new SimplePlan(List.of(SimplePlanStep.act(action, description, needsConfirmation)));
     }
 
     private Plan synthesizeFinal(SessionState session) {
         String goal = (String) session.getAttributes().getOrDefault(GOAL_KEY, "");
+        int msgStart = (int) session.getAttributes().getOrDefault(MSG_START_KEY, 0);
 
         StringBuilder results = new StringBuilder();
-        for (Message m : session.getMessages()) {
+        List<Message> allMessages = session.getMessages();
+        for (int i = msgStart; i < allMessages.size(); i++) {
+            Message m = allMessages.get(i);
             if (m.getRole() == Message.Role.SYSTEM) {
                 results.append(m.getContent()).append("\n");
             }
@@ -170,11 +180,10 @@ public class PlanAndSolvePlanner implements Planner {
             return new SimplePlan(List.of(SimplePlanStep.done(finalAnswer)));
         } catch (Exception e) {
             log.warn("[PlanAndSolve] Synthesis failed: {}", e.getMessage());
-            // Fallback: last SYSTEM message from session
-            List<Message> messages = session.getMessages();
-            for (int i = messages.size() - 1; i >= 0; i--) {
-                if (messages.get(i).getRole() == Message.Role.SYSTEM) {
-                    return new SimplePlan(List.of(SimplePlanStep.done(messages.get(i).getContent())));
+            // Fallback: last SYSTEM message from the current planning cycle only
+            for (int i = allMessages.size() - 1; i >= msgStart; i--) {
+                if (allMessages.get(i).getRole() == Message.Role.SYSTEM) {
+                    return new SimplePlan(List.of(SimplePlanStep.done(allMessages.get(i).getContent())));
                 }
             }
             return new SimplePlan(List.of(SimplePlanStep.done(results.toString().trim())));
