@@ -41,8 +41,8 @@ public class KnowAgentPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(KnowAgentPlanner.class);
 
-    private static final String KB_KEY           = StrategySessionKeys.KNOWAGENT_KB;
-    private static final String INITIALIZED_KEY  = StrategySessionKeys.KNOWAGENT_INITIALIZED;
+    private static final String KB_KEY = StrategySessionKeys.KNOWAGENT_KB;
+    private static final String INITIALIZED_KEY = StrategySessionKeys.KNOWAGENT_INITIALIZED;
     private static final String LAST_CONTEXT_KEY = StrategySessionKeys.KNOWAGENT_LAST_CONTEXT;
 
     private static final Pattern PRECONDITION_PATTERN =

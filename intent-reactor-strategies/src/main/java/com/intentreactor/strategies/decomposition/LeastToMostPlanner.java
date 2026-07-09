@@ -38,10 +38,10 @@ public class LeastToMostPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(LeastToMostPlanner.class);
 
-    private static final String PHASE_KEY   = StrategySessionKeys.LTM_PHASE;
-    private static final String TASKS_KEY   = StrategySessionKeys.LTM_TASKS;
+    private static final String PHASE_KEY = StrategySessionKeys.LTM_PHASE;
+    private static final String TASKS_KEY = StrategySessionKeys.LTM_TASKS;
     private static final String RESULTS_KEY = StrategySessionKeys.LTM_RESULTS;
-    private static final String INDEX_KEY   = StrategySessionKeys.LTM_INDEX;
+    private static final String INDEX_KEY = StrategySessionKeys.LTM_INDEX;
 
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;

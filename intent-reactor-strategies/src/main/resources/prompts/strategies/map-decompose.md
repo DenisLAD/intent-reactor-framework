@@ -8,11 +8,12 @@ Available tools:
 
 Return a JSON array (no more than {maxSubtasks} elements):
 [
-  {"id": "1", "description": "Description of the first subgoal", "depends_on": []},
-  {"id": "2", "description": "Description of the second subgoal", "depends_on": ["1"]}
+{"id": "1", "description": "Description of the first subgoal", "depends_on": []},
+{"id": "2", "description": "Description of the second subgoal", "depends_on": ["1"]}
 ]
 
 Rules:
+
 - depends_on lists the ids of subgoals that must be completed first
 - If a subgoal is independent — depends_on: []
 - Subgoals must be concrete and atomic

@@ -13,12 +13,12 @@ Choose the operation that will most advance the solution.
 Return JSON:
 
 {
-  "operation": "GENERATE",
-  "source_ids": ["id1"],
-  "content": "New thought or refinement",
-  "score": null,
-  "done": false,
-  "final_answer": null
+"operation": "GENERATE",
+"source_ids": ["id1"],
+"content": "New thought or refinement",
+"score": null,
+"done": false,
+"final_answer": null
 }
 
 - operation: one of GENERATE, AGGREGATE, REFINE, SCORE

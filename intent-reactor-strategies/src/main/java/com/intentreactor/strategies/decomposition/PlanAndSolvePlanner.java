@@ -42,10 +42,10 @@ public class PlanAndSolvePlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(PlanAndSolvePlanner.class);
 
-    private static final String PHASE_KEY    = StrategySessionKeys.PAS_PHASE;
-    private static final String PLAN_KEY     = StrategySessionKeys.PAS_PLAN;
-    private static final String STEP_KEY     = StrategySessionKeys.PAS_STEP;
-    private static final String GOAL_KEY     = StrategySessionKeys.PAS_GOAL;
+    private static final String PHASE_KEY = StrategySessionKeys.PAS_PHASE;
+    private static final String PLAN_KEY = StrategySessionKeys.PAS_PLAN;
+    private static final String STEP_KEY = StrategySessionKeys.PAS_STEP;
+    private static final String GOAL_KEY = StrategySessionKeys.PAS_GOAL;
     private static final String MSG_START_KEY = StrategySessionKeys.PAS_MSG_START;
 
     private final ChatClient chatClient;

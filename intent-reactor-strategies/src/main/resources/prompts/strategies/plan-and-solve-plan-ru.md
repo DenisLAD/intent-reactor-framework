@@ -8,16 +8,16 @@
 
 Верни JSON-массив шагов:
 [
-  {
-    "toolName": "weather",
-    "parameters": {"city": "Москва"},
-    "description": "Получить текущую погоду в Москве"
-  },
-  {
-    "toolName": null,
-    "parameters": {},
-    "description": "Сформулировать финальный ответ"
-  }
+{
+"toolName": "weather",
+"parameters": {"city": "Москва"},
+"description": "Получить текущую погоду в Москве"
+},
+{
+"toolName": null,
+"parameters": {},
+"description": "Сформулировать финальный ответ"
+}
 ]
 
 Максимум {max} шагов. Используй точные имена инструментов из списка выше.

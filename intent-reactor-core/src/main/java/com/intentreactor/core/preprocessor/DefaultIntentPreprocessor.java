@@ -29,7 +29,7 @@ import java.util.Set;
 public class DefaultIntentPreprocessor implements IntentPreprocessor {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultIntentPreprocessor.class);
-
+    private static final Set<String> INTENT_JSON_KEYS = Set.of("intents", "reasoningSuggestion");
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final IntentReactorProperties properties;
@@ -99,8 +99,6 @@ public class DefaultIntentPreprocessor implements IntentPreprocessor {
         messages.add(new UserMessage(userMessage));
         return messages;
     }
-
-    private static final Set<String> INTENT_JSON_KEYS = Set.of("intents", "reasoningSuggestion");
 
     @SuppressWarnings("unchecked")
     protected IntentAnalysisResult parseResponse(String response) throws Exception {

@@ -45,14 +45,14 @@ public class HTPPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(HTPPlanner.class);
 
-    private static final String PHASE_KEY            = StrategySessionKeys.HTP_PHASE;
-    private static final String SUBGOALS_KEY          = StrategySessionKeys.HTP_SUBGOALS;
-    private static final String SUBGOAL_IDX_KEY       = StrategySessionKeys.HTP_SUBGOAL_IDX;
-    private static final String STEPS_KEY             = StrategySessionKeys.HTP_STEPS;
-    private static final String STEP_IDX_KEY          = StrategySessionKeys.HTP_STEP_IDX;
-    private static final String RESULTS_KEY           = StrategySessionKeys.HTP_RESULTS;
-    private static final String REFINEMENT_COUNT_KEY  = StrategySessionKeys.HTP_REFINEMENT_COUNT;
-    private static final String NODE_MSG_START_KEY    = StrategySessionKeys.HTP_NODE_MSG_START;
+    private static final String PHASE_KEY = StrategySessionKeys.HTP_PHASE;
+    private static final String SUBGOALS_KEY = StrategySessionKeys.HTP_SUBGOALS;
+    private static final String SUBGOAL_IDX_KEY = StrategySessionKeys.HTP_SUBGOAL_IDX;
+    private static final String STEPS_KEY = StrategySessionKeys.HTP_STEPS;
+    private static final String STEP_IDX_KEY = StrategySessionKeys.HTP_STEP_IDX;
+    private static final String RESULTS_KEY = StrategySessionKeys.HTP_RESULTS;
+    private static final String REFINEMENT_COUNT_KEY = StrategySessionKeys.HTP_REFINEMENT_COUNT;
+    private static final String NODE_MSG_START_KEY = StrategySessionKeys.HTP_NODE_MSG_START;
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
@@ -302,7 +302,7 @@ public class HTPPlanner implements Planner {
             Message m = messages.get(i);
             if (m.getRole() == Message.Role.SYSTEM && m.getContent() != null
                     && (m.getContent().startsWith(MessageMarkers.TOOL_RESULT)
-                        || m.getContent().startsWith(MessageMarkers.TOOL_ERROR))) {
+                    || m.getContent().startsWith(MessageMarkers.TOOL_ERROR))) {
                 sb.append(m.getContent()).append("\n");
             }
         }

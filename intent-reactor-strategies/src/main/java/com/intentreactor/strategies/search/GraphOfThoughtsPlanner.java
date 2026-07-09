@@ -37,7 +37,7 @@ public class GraphOfThoughtsPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(GraphOfThoughtsPlanner.class);
     private static final String GRAPH_KEY = StrategySessionKeys.GOT_GRAPH;
-    private static final String GOAL_KEY  = StrategySessionKeys.GOT_GOAL;
+    private static final String GOAL_KEY = StrategySessionKeys.GOT_GOAL;
 
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;

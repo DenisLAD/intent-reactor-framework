@@ -28,6 +28,26 @@ public class SequentialMultiIntentStrategy implements MultiIntentStrategy {
         this.sessionStore = sessionStore;
     }
 
+    static ReactorResponse mergeResults(String sessionId, MultiIntentContext ctx) {
+        List<PerformedAction> allActions = new ArrayList<>();
+        StringBuilder finalText = new StringBuilder();
+        boolean anyFailed = false;
+
+        for (Map.Entry<String, ReactorResponse> entry : ctx.getResults().entrySet()) {
+            ReactorResponse r = entry.getValue();
+            if (r.getStatus() == PlanStatus.FAILED) anyFailed = true;
+            if (r.getActions() != null) allActions.addAll(r.getActions());
+            if (r.getFinalText() != null) {
+                if (!finalText.isEmpty()) finalText.append("; ");
+                finalText.append("[").append(entry.getKey()).append("] ").append(r.getFinalText());
+            }
+        }
+
+        return anyFailed
+                ? ReactorResponse.failed(sessionId, "Some intents failed: " + finalText)
+                : ReactorResponse.completed(sessionId, finalText.toString(), allActions);
+    }
+
     @Override
     public String name() {
         return "sequential";
@@ -55,25 +75,5 @@ public class SequentialMultiIntentStrategy implements MultiIntentStrategy {
         }
 
         return mergeResults(session.getId(), ctx);
-    }
-
-    static ReactorResponse mergeResults(String sessionId, MultiIntentContext ctx) {
-        List<PerformedAction> allActions = new ArrayList<>();
-        StringBuilder finalText = new StringBuilder();
-        boolean anyFailed = false;
-
-        for (Map.Entry<String, ReactorResponse> entry : ctx.getResults().entrySet()) {
-            ReactorResponse r = entry.getValue();
-            if (r.getStatus() == PlanStatus.FAILED) anyFailed = true;
-            if (r.getActions() != null) allActions.addAll(r.getActions());
-            if (r.getFinalText() != null) {
-                if (!finalText.isEmpty()) finalText.append("; ");
-                finalText.append("[").append(entry.getKey()).append("] ").append(r.getFinalText());
-            }
-        }
-
-        return anyFailed
-                ? ReactorResponse.failed(sessionId, "Some intents failed: " + finalText)
-                : ReactorResponse.completed(sessionId, finalText.toString(), allActions);
     }
 }

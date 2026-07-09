@@ -13,12 +13,12 @@
 Верни JSON:
 
 {
-  "operation": "GENERATE",
-  "source_ids": ["id1"],
-  "content": "Новая мысль или уточнение",
-  "score": null,
-  "done": false,
-  "final_answer": null
+"operation": "GENERATE",
+"source_ids": ["id1"],
+"content": "Новая мысль или уточнение",
+"score": null,
+"done": false,
+"final_answer": null
 }
 
 - operation: одно из GENERATE, AGGREGATE, REFINE, SCORE

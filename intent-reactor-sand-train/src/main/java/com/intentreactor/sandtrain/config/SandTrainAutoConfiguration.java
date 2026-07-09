@@ -37,7 +37,7 @@ public class SandTrainAutoConfiguration {
     @ConditionalOnMissingBean
     @ConditionalOnClass(name = "org.springframework.web.servlet.DispatcherServlet")
     public SandTrainController sandTrainController(SandDataCollector collector,
-                                                    SandDatasetExporter exporter) {
+                                                   SandDatasetExporter exporter) {
         return new SandTrainController(collector, exporter);
     }
 }

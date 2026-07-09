@@ -44,10 +44,10 @@ public class SelfAskPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(SelfAskPlanner.class);
 
-    private static final String PHASE_KEY     = StrategySessionKeys.SA_PHASE;
+    private static final String PHASE_KEY = StrategySessionKeys.SA_PHASE;
     private static final String QUESTIONS_KEY = StrategySessionKeys.SA_QUESTIONS;
-    private static final String ANSWERS_KEY   = StrategySessionKeys.SA_ANSWERS;
-    private static final String INDEX_KEY     = StrategySessionKeys.SA_INDEX;
+    private static final String ANSWERS_KEY = StrategySessionKeys.SA_ANSWERS;
+    private static final String INDEX_KEY = StrategySessionKeys.SA_INDEX;
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;

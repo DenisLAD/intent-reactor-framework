@@ -34,9 +34,9 @@ public class SelfDiscoverPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(SelfDiscoverPlanner.class);
 
-    private static final String PHASE_KEY   = StrategySessionKeys.SD_PHASE;
+    private static final String PHASE_KEY = StrategySessionKeys.SD_PHASE;
     private static final String MODULES_KEY = StrategySessionKeys.SD_MODULES;
-    private static final String PLAN_KEY    = StrategySessionKeys.SD_PLAN;
+    private static final String PLAN_KEY = StrategySessionKeys.SD_PLAN;
 
     private final Planner delegate;
     private final ChatClient chatClient;

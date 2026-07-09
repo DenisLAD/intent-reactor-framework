@@ -9,7 +9,9 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Handles LLM responses where a field is sometimes a String, sometimes a JSON array. */
+/**
+ * Handles LLM responses where a field is sometimes a String, sometimes a JSON array.
+ */
 public class StringOrArrayDeserializer extends StdDeserializer<String> {
 
     public StringOrArrayDeserializer() {

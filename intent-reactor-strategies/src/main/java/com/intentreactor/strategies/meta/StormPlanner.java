@@ -40,11 +40,11 @@ public class StormPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(StormPlanner.class);
 
-    private static final String PHASE_KEY          = StrategySessionKeys.STORM_PHASE;
-    private static final String PERSPECTIVES_KEY   = StrategySessionKeys.STORM_PERSPECTIVES;
-    private static final String PERSONA_INDEX_KEY  = StrategySessionKeys.STORM_PERSONA_INDEX;
+    private static final String PHASE_KEY = StrategySessionKeys.STORM_PHASE;
+    private static final String PERSPECTIVES_KEY = StrategySessionKeys.STORM_PERSPECTIVES;
+    private static final String PERSONA_INDEX_KEY = StrategySessionKeys.STORM_PERSONA_INDEX;
     private static final String RESEARCH_STEPS_KEY = StrategySessionKeys.STORM_RESEARCH_STEPS;
-    private static final String GOAL_KEY           = StrategySessionKeys.STORM_GOAL;
+    private static final String GOAL_KEY = StrategySessionKeys.STORM_GOAL;
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;

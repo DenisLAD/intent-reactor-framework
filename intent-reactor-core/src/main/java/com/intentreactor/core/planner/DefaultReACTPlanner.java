@@ -40,12 +40,13 @@ import java.util.Set;
 public class DefaultReACTPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultReACTPlanner.class);
-
+    @SuppressWarnings("unchecked")
+    private static final Set<String> REACT_JSON_KEYS = Set.of("done", "failed", "toolName");
+    final IntentReactorProperties properties;
+    final PromptLoader promptLoader = new PromptLoader();
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
-    final IntentReactorProperties properties;
     private final ObjectMapper objectMapper;
-    final PromptLoader promptLoader = new PromptLoader();
     private final List<PromptContextProvider> promptContextProviders;
     private final List<MessageContextPreProcessor> preProcessors;
     private final List<MessageContextPostProcessor> postProcessors;
@@ -65,7 +66,9 @@ public class DefaultReACTPlanner implements Planner {
         this(chatClient, toolProvider, properties, objectMapper, promptContextProviders, List.of(), List.of());
     }
 
-    /** Backward-compatible constructor: wraps {@code messageCompressor} as a post-processor. */
+    /**
+     * Backward-compatible constructor: wraps {@code messageCompressor} as a post-processor.
+     */
     public DefaultReACTPlanner(ChatClient chatClient,
                                ToolProvider toolProvider,
                                IntentReactorProperties properties,
@@ -73,11 +76,13 @@ public class DefaultReACTPlanner implements Planner {
                                List<PromptContextProvider> promptContextProviders,
                                MessageCompressor messageCompressor) {
         this(chatClient, toolProvider, properties, objectMapper, promptContextProviders,
-             List.of(),
-             messageCompressor != null ? List.of(messageCompressor) : List.of());
+                List.of(),
+                messageCompressor != null ? List.of(messageCompressor) : List.of());
     }
 
-    /** Full constructor used by {@code IntentReactorAutoConfiguration}. */
+    /**
+     * Full constructor used by {@code IntentReactorAutoConfiguration}.
+     */
     public DefaultReACTPlanner(ChatClient chatClient,
                                ToolProvider toolProvider,
                                IntentReactorProperties properties,
@@ -193,7 +198,12 @@ public class DefaultReACTPlanner implements Planner {
             for (Message m : all) {
                 if (!m.isPinned()) continue;
                 boolean inTail = false;
-                for (Message t : tail) { if (t == m) { inTail = true; break; } }
+                for (Message t : tail) {
+                    if (t == m) {
+                        inTail = true;
+                        break;
+                    }
+                }
                 if (!inTail) missingPinned.add(m);
             }
 
@@ -263,9 +273,6 @@ public class DefaultReACTPlanner implements Planner {
 
         return messages;
     }
-
-    @SuppressWarnings("unchecked")
-    private static final Set<String> REACT_JSON_KEYS = Set.of("done", "failed", "toolName");
 
     Plan parseResponse(String response, List<Tool> tools, SessionState session) throws Exception {
         String json = LlmResponseParser.extractJson(response, objectMapper, REACT_JSON_KEYS);

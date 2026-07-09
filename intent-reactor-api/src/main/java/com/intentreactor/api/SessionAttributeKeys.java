@@ -27,5 +27,6 @@ public final class SessionAttributeKeys {
      */
     public static final String MULTI_INTENT_STATE_KEY = "multiIntentState";
 
-    private SessionAttributeKeys() {}
+    private SessionAttributeKeys() {
+    }
 }

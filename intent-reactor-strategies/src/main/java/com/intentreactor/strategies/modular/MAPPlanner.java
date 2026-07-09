@@ -283,7 +283,8 @@ public class MAPPlanner implements Planner {
             int start = cleaned.indexOf('[');
             int end = cleaned.lastIndexOf(']');
             if (start >= 0 && end > start) cleaned = cleaned.substring(start, end + 1);
-            List<Map<String, Object>> raw = objectMapper.readValue(cleaned, new TypeReference<>() {});
+            List<Map<String, Object>> raw = objectMapper.readValue(cleaned, new TypeReference<>() {
+            });
             List<Subgoal> result = new ArrayList<>();
             for (Map<String, Object> item : raw) {
                 String id = String.valueOf(item.getOrDefault("id", String.valueOf(result.size() + 1)));
@@ -308,7 +309,8 @@ public class MAPPlanner implements Planner {
             int start = cleaned.indexOf('{');
             int end = cleaned.lastIndexOf('}');
             if (start >= 0 && end > start) cleaned = cleaned.substring(start, end + 1);
-            return objectMapper.readValue(cleaned, new TypeReference<>() {});
+            return objectMapper.readValue(cleaned, new TypeReference<>() {
+            });
         } catch (Exception e) {
             return Map.of();
         }
@@ -338,5 +340,6 @@ public class MAPPlanner implements Planner {
 
     // ── Inner model ─────────────────────────────────────────────────────────────
 
-    private record Subgoal(String id, String description, List<String> dependsOn) {}
+    private record Subgoal(String id, String description, List<String> dependsOn) {
+    }
 }

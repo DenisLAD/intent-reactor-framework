@@ -7,10 +7,11 @@ package com.intentreactor.core.service;
 final class CoreSessionKeys {
 
     static final String CONFIRMATION_REQUESTED_AT = "confirmationRequestedAt";
-    static final String ORIGINAL_INTENT           = "originalIntent";
-    static final String PENDING_STEP              = "pendingStep";
-    static final String PENDING_MODIFIED_PARAMS   = "pendingModifiedParameters";
-    static final String THOUGHTS                  = "thoughts";
+    static final String ORIGINAL_INTENT = "originalIntent";
+    static final String PENDING_STEP = "pendingStep";
+    static final String PENDING_MODIFIED_PARAMS = "pendingModifiedParameters";
+    static final String THOUGHTS = "thoughts";
 
-    private CoreSessionKeys() {}
+    private CoreSessionKeys() {
+    }
 }

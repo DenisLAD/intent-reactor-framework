@@ -31,11 +31,10 @@ import java.util.Map;
  */
 public class MessageCompressor implements MessageContextPostProcessor {
 
-    private static final Logger log = LoggerFactory.getLogger(MessageCompressor.class);
-
     static final String ATTR_SUMMARY = "_contextSummary";
     static final String ATTR_SUMMARY_UP_TO = "_contextSummaryUpTo";
-
+    private static final Logger log = LoggerFactory.getLogger(MessageCompressor.class);
+    private static final int MAX_TOOL_RESULT_CHARS = 2000;
     private final ChatClient chatClient;
     private final IntentReactorProperties properties;
     private final PromptLoader promptLoader;
@@ -49,6 +48,30 @@ public class MessageCompressor implements MessageContextPostProcessor {
         this.properties = properties;
         this.promptLoader = promptLoader;
         this.eventPublisher = eventPublisher;
+    }
+
+    /**
+     * Returns {@code true} if {@code content} is a {@code [TOOL_RESULT]} message for one of the
+     * listed tool names.
+     */
+    private static boolean isSkippedToolResult(String content, java.util.List<String> skipNames) {
+        final String prefix = "[TOOL_RESULT] ";
+        if (!content.startsWith(prefix)) return false;
+        int colon = content.indexOf(':', prefix.length());
+        if (colon < 0) return false;
+        String toolName = content.substring(prefix.length(), colon).trim();
+        return skipNames.contains(toolName);
+    }
+
+    /**
+     * Extracts the user's goal from the first pinned USER message in the session.
+     */
+    private static String extractGoal(SessionState session) {
+        return session.getMessages().stream()
+                .filter(m -> m.isPinned() && m.getRole() == Message.Role.USER)
+                .findFirst()
+                .map(m -> "Цель пользователя: " + m.getContent())
+                .orElse("не указана");
     }
 
     /**
@@ -153,28 +176,4 @@ public class MessageCompressor implements MessageContextPostProcessor {
         }
         return sb.toString();
     }
-
-    /**
-     * Returns {@code true} if {@code content} is a {@code [TOOL_RESULT]} message for one of the
-     * listed tool names.
-     */
-    private static boolean isSkippedToolResult(String content, java.util.List<String> skipNames) {
-        final String prefix = "[TOOL_RESULT] ";
-        if (!content.startsWith(prefix)) return false;
-        int colon = content.indexOf(':', prefix.length());
-        if (colon < 0) return false;
-        String toolName = content.substring(prefix.length(), colon).trim();
-        return skipNames.contains(toolName);
-    }
-
-    /** Extracts the user's goal from the first pinned USER message in the session. */
-    private static String extractGoal(SessionState session) {
-        return session.getMessages().stream()
-                .filter(m -> m.isPinned() && m.getRole() == Message.Role.USER)
-                .findFirst()
-                .map(m -> "Цель пользователя: " + m.getContent())
-                .orElse("не указана");
-    }
-
-    private static final int MAX_TOOL_RESULT_CHARS = 2000;
 }

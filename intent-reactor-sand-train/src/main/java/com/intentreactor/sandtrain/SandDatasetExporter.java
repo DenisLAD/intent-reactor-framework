@@ -42,7 +42,7 @@ public class SandDatasetExporter {
 
         messages.add(message("system",
                 "You are an action selection expert. Given the agent's goal, context, and candidate actions " +
-                "with predicted outcomes, select the best action index. Respond with JSON only."));
+                        "with predicted outcomes, select the best action index. Respond with JSON only."));
 
         String userContent = buildUserContent(record);
         messages.add(message("user", userContent));
@@ -67,10 +67,10 @@ public class SandDatasetExporter {
         sb.append("Candidates:\n");
         for (Map<String, Object> c : record.getCandidates()) {
             sb.append("  [").append(c.get("index")).append("] tool=").append(c.get("toolName"))
-              .append(" params=").append(objectMapper.writeValueAsString(c.get("parameters")))
-              .append(" prediction=").append(c.get("prediction"))
-              .append(" score=").append(c.get("score"))
-              .append("\n");
+                    .append(" params=").append(objectMapper.writeValueAsString(c.get("parameters")))
+                    .append(" prediction=").append(c.get("prediction"))
+                    .append(" score=").append(c.get("score"))
+                    .append("\n");
         }
         return sb.toString();
     }

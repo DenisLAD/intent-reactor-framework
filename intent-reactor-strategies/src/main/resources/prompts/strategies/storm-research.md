@@ -9,9 +9,9 @@ Available tools:
 Return JSON with chosen tool:
 
 {
-  "toolName": "knowledge_search",
-  "parameters": {"query": "...specific query reflecting your perspective..."},
-  "rationale": "This query is important because from my perspective..."
+"toolName": "knowledge_search",
+"parameters": {"query": "...specific query reflecting your perspective..."},
+"rationale": "This query is important because from my perspective..."
 }
 
 Use EXACT tool names from the list above.

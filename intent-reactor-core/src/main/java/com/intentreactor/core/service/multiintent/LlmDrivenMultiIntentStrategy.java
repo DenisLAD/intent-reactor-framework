@@ -92,7 +92,8 @@ public class LlmDrivenMultiIntentStrategy implements MultiIntentStrategy {
         Map<String, Intent> byName = new LinkedHashMap<>();
         original.forEach(i -> byName.put(i.getName(), i));
         List<String> names = objectMapper.readValue(response.substring(start, end + 1),
-                new TypeReference<List<String>>() {});
+                new TypeReference<List<String>>() {
+                });
         List<Intent> ordered = new ArrayList<>();
         for (String name : names) {
             Intent found = byName.remove(name);

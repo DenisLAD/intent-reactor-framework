@@ -15,7 +15,8 @@ import java.util.Set;
  */
 public final class LlmResponseParser {
 
-    private LlmResponseParser() {}
+    private LlmResponseParser() {
+    }
 
     /**
      * Strips {@code <think>...</think>} reasoning blocks emitted by models such as Qwen3.
@@ -90,12 +91,19 @@ public final class LlmResponseParser {
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             if (inString) {
-                if (c == '\\') { i++; }
-                else if (c == '"') { inString = false; }
+                if (c == '\\') {
+                    i++;
+                } else if (c == '"') {
+                    inString = false;
+                }
             } else {
-                if (c == '"') { inString = true; }
-                else if (c == '{') { depth++; }
-                else if (c == '}' && depth > 0) { depth--; }
+                if (c == '"') {
+                    inString = true;
+                } else if (c == '{') {
+                    depth++;
+                } else if (c == '}' && depth > 0) {
+                    depth--;
+                }
             }
         }
         if (depth <= 0 || depth > 10) return null;
@@ -113,7 +121,7 @@ public final class LlmResponseParser {
      * @param objectMapper  used to validate and inspect candidates
      * @param preferredKeys domain-specific keys that identify the "correct" JSON object
      *                      (e.g. {@code Set.of("done","failed","toolName")} for ReACT,
-     *                       {@code Set.of("intents","reasoningSuggestion")} for intent analysis)
+     *                      {@code Set.of("intents","reasoningSuggestion")} for intent analysis)
      */
     public static String extractJson(String response, ObjectMapper objectMapper,
                                      Set<String> preferredKeys) {

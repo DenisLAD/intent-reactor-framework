@@ -22,7 +22,6 @@ import com.intentreactor.strategies.config.StrategySessionKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
 
@@ -71,15 +70,15 @@ public class SANDPlanner implements Planner {
         this.objectMapper = objectMapper;
         this.toolProvider = toolProvider;
         StrategiesProperties.SandConfig cfg = props.getSand();
-        this.numCandidates         = cfg.getNumCandidates();
-        this.useSimulation         = cfg.isUseSimulation();
-        this.evaluationMethod      = cfg.getEvaluationMethod();
+        this.numCandidates = cfg.getNumCandidates();
+        this.useSimulation = cfg.isUseSimulation();
+        this.evaluationMethod = cfg.getEvaluationMethod();
         this.maxTrainingLogEntries = cfg.getMaxTrainingLogEntries();
-        this.autonomous            = intentReactorProperties.getPlanning().isAutonomous();
+        this.autonomous = intentReactorProperties.getPlanning().isAutonomous();
         StrategiesProperties.PromptsConfig prompts = props.getPrompts();
         this.candidatesPromptPath = prompts.getSandCandidates();
-        this.predictPromptPath    = prompts.getSandPredict();
-        this.evaluatePromptPath   = prompts.getSandEvaluate();
+        this.predictPromptPath = prompts.getSandPredict();
+        this.evaluatePromptPath = prompts.getSandEvaluate();
     }
 
     @Override
@@ -189,7 +188,7 @@ public class SANDPlanner implements Planner {
     }
 
     private void predictOutcomes(List<SandCandidate> candidates, List<Tool> tools,
-                                  String context, String goal, SessionState session) {
+                                 String context, String goal, SessionState session) {
         Map<String, Tool> toolMap = tools.stream().collect(Collectors.toMap(Tool::getName, t -> t));
         for (SandCandidate candidate : candidates) {
             Tool tool = toolMap.get(candidate.getToolName());
@@ -302,7 +301,7 @@ public class SANDPlanner implements Planner {
         for (int i = fromIdx; i < messages.size(); i++) {
             var msg = messages.get(i);
             sb.append(msg.getRole().name()).append(": ")
-              .append(truncate(msg.getContent(), 300)).append("\n");
+                    .append(truncate(msg.getContent(), 300)).append("\n");
         }
         return sb.toString().trim();
     }
@@ -331,7 +330,8 @@ public class SANDPlanner implements Planner {
             int end = cleaned.lastIndexOf(']');
             if (start < 0 || end <= start) return List.of();
             return objectMapper.readValue(cleaned.substring(start, end + 1),
-                    new TypeReference<List<Map<String, Object>>>() {});
+                    new TypeReference<List<Map<String, Object>>>() {
+                    });
         } catch (Exception e) {
             return List.of();
         }
@@ -345,7 +345,8 @@ public class SANDPlanner implements Planner {
             int end = cleaned.lastIndexOf('}');
             if (start < 0 || end <= start) return Map.of();
             return objectMapper.readValue(cleaned.substring(start, end + 1),
-                    new TypeReference<Map<String, Object>>() {});
+                    new TypeReference<Map<String, Object>>() {
+                    });
         } catch (Exception e) {
             return Map.of();
         }

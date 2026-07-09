@@ -9,12 +9,12 @@ Each persona must:
 Return a JSON array:
 
 [
-  {
-    "name": "Technical Architect",
-    "viewpoint": "Explores technical implementation, performance and scalability"
-  },
-  {
-    "name": "Product Manager",
-    "viewpoint": "Analyzes user needs, market opportunities and constraints"
-  }
+{
+"name": "Technical Architect",
+"viewpoint": "Explores technical implementation, performance and scalability"
+},
+{
+"name": "Product Manager",
+"viewpoint": "Analyzes user needs, market opportunities and constraints"
+}
 ]

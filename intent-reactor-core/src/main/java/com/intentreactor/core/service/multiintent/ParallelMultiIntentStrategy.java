@@ -40,6 +40,16 @@ public class ParallelMultiIntentStrategy implements MultiIntentStrategy {
         this.properties = properties;
     }
 
+    private static SessionState cloneSession(SessionState original, String suffix) {
+        SessionState clone = new SessionState(
+                original.getId() + "-parallel-" + suffix.replaceAll("[^a-zA-Z0-9]", ""));
+        clone.setMessages(new ArrayList<>(original.getMessages()));
+        Map<String, Object> clonedAttrs = new HashMap<>(original.getAttributes());
+        clonedAttrs.remove(SessionAttributeKeys.MULTI_INTENT_STATE_KEY);
+        clone.setAttributes(clonedAttrs);
+        return clone;
+    }
+
     @Override
     public String name() {
         return "parallel";
@@ -86,15 +96,5 @@ public class ParallelMultiIntentStrategy implements MultiIntentStrategy {
         }
 
         return SequentialMultiIntentStrategy.mergeResults(session.getId(), ctx);
-    }
-
-    private static SessionState cloneSession(SessionState original, String suffix) {
-        SessionState clone = new SessionState(
-                original.getId() + "-parallel-" + suffix.replaceAll("[^a-zA-Z0-9]", ""));
-        clone.setMessages(new ArrayList<>(original.getMessages()));
-        Map<String, Object> clonedAttrs = new HashMap<>(original.getAttributes());
-        clonedAttrs.remove(SessionAttributeKeys.MULTI_INTENT_STATE_KEY);
-        clone.setAttributes(clonedAttrs);
-        return clone;
     }
 }

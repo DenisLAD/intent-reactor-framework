@@ -57,13 +57,13 @@ public class ReTreValPlanner implements Planner {
 
     private static final Logger log = LoggerFactory.getLogger(ReTreValPlanner.class);
 
-    private static final String TREE_KEY      = StrategySessionKeys.RETREVAL_TREE;
-    private static final String PHASE_KEY     = StrategySessionKeys.RETREVAL_PHASE;
-    private static final String FRONTIER_KEY  = StrategySessionKeys.RETREVAL_FRONTIER;
-    private static final String CUR_NODE_KEY  = StrategySessionKeys.RETREVAL_CUR_NODE;
-    private static final String PATTERNS_KEY  = StrategySessionKeys.RETREVAL_PATTERNS;
+    private static final String TREE_KEY = StrategySessionKeys.RETREVAL_TREE;
+    private static final String PHASE_KEY = StrategySessionKeys.RETREVAL_PHASE;
+    private static final String FRONTIER_KEY = StrategySessionKeys.RETREVAL_FRONTIER;
+    private static final String CUR_NODE_KEY = StrategySessionKeys.RETREVAL_CUR_NODE;
+    private static final String PATTERNS_KEY = StrategySessionKeys.RETREVAL_PATTERNS;
     private static final String BACKTRACK_KEY = StrategySessionKeys.RETREVAL_BACKTRACK;
-    private static final String GOAL_KEY      = StrategySessionKeys.RETREVAL_GOAL;
+    private static final String GOAL_KEY = StrategySessionKeys.RETREVAL_GOAL;
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
@@ -89,25 +89,25 @@ public class ReTreValPlanner implements Planner {
 
     public ReTreValPlanner(ChatClient chatClient, ToolProvider toolProvider,
                            ObjectMapper objectMapper, StrategiesProperties props) {
-        this.chatClient   = chatClient;
+        this.chatClient = chatClient;
         this.toolProvider = toolProvider;
         this.objectMapper = objectMapper;
         StrategiesProperties.RetrevalConfig cfg = props.getRetreval();
-        this.maxTreeDepth        = cfg.getMaxTreeDepth();
-        this.candidatesPerStep   = cfg.getCandidatesPerStep();
-        this.beamWidth           = cfg.getBeamWidth();
+        this.maxTreeDepth = cfg.getMaxTreeDepth();
+        this.candidatesPerStep = cfg.getCandidatesPerStep();
+        this.beamWidth = cfg.getBeamWidth();
         this.validationThreshold = cfg.getValidationThreshold();
-        this.finalThreshold      = cfg.getFinalThreshold();
-        this.useExternalCritic   = cfg.isUseExternalCritic();
-        this.memoryEnabled       = cfg.isMemoryEnabled();
-        this.maxMemories         = cfg.getMaxMemories();
+        this.finalThreshold = cfg.getFinalThreshold();
+        this.useExternalCritic = cfg.isUseExternalCritic();
+        this.memoryEnabled = cfg.isMemoryEnabled();
+        this.maxMemories = cfg.getMaxMemories();
         StrategiesProperties.PromptsConfig p = props.getPrompts();
-        this.expandPromptPath      = p.getRetrevalExpand();
-        this.selfScorePromptPath   = p.getRetrevalSelfScore();
+        this.expandPromptPath = p.getRetrevalExpand();
+        this.selfScorePromptPath = p.getRetrevalSelfScore();
         this.criticScorePromptPath = p.getRetrevalCriticScore();
-        this.synthesizePromptPath  = p.getRetrevalSynthesize();
-        this.simulatePromptPath    = p.getRetrevalSimulate();
-        this.backtrackPromptPath   = p.getRetrevalBacktrack();
+        this.synthesizePromptPath = p.getRetrevalSynthesize();
+        this.simulatePromptPath = p.getRetrevalSimulate();
+        this.backtrackPromptPath = p.getRetrevalBacktrack();
         this.labels = props.getLabels();
     }
 
@@ -171,7 +171,9 @@ public class ReTreValPlanner implements Planner {
         }
     }
 
-    /** Keeps the frontier as the top-{@code beamWidth} node IDs by (self+critic)/2 score. */
+    /**
+     * Keeps the frontier as the top-{@code beamWidth} node IDs by (self+critic)/2 score.
+     */
     private void maintainFrontier(List<String> frontier, String candidateId, RetrevalTree tree, int beamWidth) {
         if (candidateId != null && !frontier.contains(candidateId)) frontier.add(candidateId);
         frontier.sort(Comparator.comparingDouble((String id) -> frontierScore(tree, id)).reversed());
@@ -245,7 +247,7 @@ public class ReTreValPlanner implements Planner {
             List<RetrevalNode> childNodes = new ArrayList<>();
             for (Map<String, Object> cand : rawCandidates) {
                 String reasoning = (String) cand.getOrDefault("reasoning", "");
-                String toolName  = (String) cand.get("toolName");
+                String toolName = (String) cand.get("toolName");
                 @SuppressWarnings("unchecked")
                 Map<String, Object> params = cand.get("parameters") instanceof Map
                         ? (Map<String, Object>) cand.get("parameters") : Map.of();
@@ -264,7 +266,7 @@ public class ReTreValPlanner implements Planner {
                 String scoringContext = reasoning
                         + (predictedResult.isBlank() ? "" : "\nPredicted result: " + predictedResult);
 
-                double selfScore   = scoreCandidate(scoringContext, goal, selfScorePromptPath);
+                double selfScore = scoreCandidate(scoringContext, goal, selfScorePromptPath);
                 double criticScore = useExternalCritic
                         ? scoreCandidate(scoringContext, goal, criticScorePromptPath) : selfScore;
                 double avg = (selfScore + criticScore) / 2.0;
@@ -469,8 +471,8 @@ public class ReTreValPlanner implements Planner {
             if (s >= 0 && e > s) {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> map = objectMapper.readValue(cleaned.substring(s, e + 1), Map.class);
-                String ft       = String.valueOf(map.getOrDefault("failureType", "SCORE_TOO_LOW"));
-                String desc     = String.valueOf(map.getOrDefault("description", ""));
+                String ft = String.valueOf(map.getOrDefault("failureType", "SCORE_TOO_LOW"));
+                String desc = String.valueOf(map.getOrDefault("description", ""));
                 String avoidance = String.valueOf(map.getOrDefault("avoidance", ""));
                 worst.setFailureType(ft);
                 for (RetrevalNode fn : failed) if (fn.getFailureType() == null) fn.setFailureType(ft);
@@ -496,7 +498,8 @@ public class ReTreValPlanner implements Planner {
             try {
                 String json = (String) session.getAttributes().getOrDefault(PATTERNS_KEY, "[]");
                 List<RetrevalPattern> patterns = objectMapper.readValue(json,
-                        new TypeReference<List<RetrevalPattern>>() {});
+                        new TypeReference<List<RetrevalPattern>>() {
+                        });
                 String successStr = patterns.stream()
                         .filter(p -> "SUCCESS".equals(p.getType()))
                         .map(p -> "✓ " + p.getStepContent())
@@ -507,7 +510,8 @@ public class ReTreValPlanner implements Planner {
                         .collect(Collectors.joining("\n"));
                 if (!successStr.isBlank()) pathStr += "\n\nSuccessful patterns:\n" + successStr;
                 if (!failureStr.isBlank()) pathStr += "\n\nFailed patterns to avoid:\n" + failureStr;
-            } catch (Exception ignored) { }
+            } catch (Exception ignored) {
+            }
         }
 
         return pathStr.isBlank() ? "No context yet." : pathStr;
@@ -519,7 +523,8 @@ public class ReTreValPlanner implements Planner {
         try {
             String json = (String) session.getAttributes().getOrDefault(PATTERNS_KEY, "[]");
             List<RetrevalPattern> patterns = new ArrayList<>(objectMapper.readValue(json,
-                    new TypeReference<List<RetrevalPattern>>() {}));
+                    new TypeReference<List<RetrevalPattern>>() {
+                    }));
             patterns.add(pattern);
             while (patterns.size() > maxMemories) patterns.remove(0);
             session.getAttributes().put(PATTERNS_KEY, objectMapper.writeValueAsString(patterns));
@@ -574,7 +579,8 @@ public class ReTreValPlanner implements Planner {
             String cleaned = stripMarkdownFences(response.strip());
             int start = cleaned.indexOf('['), end = cleaned.lastIndexOf(']');
             if (start >= 0 && end > start) cleaned = cleaned.substring(start, end + 1);
-            return objectMapper.readValue(cleaned, new TypeReference<>() {});
+            return objectMapper.readValue(cleaned, new TypeReference<>() {
+            });
         } catch (Exception e) {
             return new ArrayList<>();
         }

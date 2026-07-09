@@ -11,6 +11,8 @@
     <file url="file://$PROJECT_DIR$/intent-reactor-mcp-server/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/intent-reactor-rag/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/intent-reactor-rag/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/intent-reactor-sand-train/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/intent-reactor-sand-train/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/intent-reactor-session-jdbc/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/intent-reactor-session-jdbc/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/intent-reactor-session-jpa/src/main/java" charset="UTF-8" />

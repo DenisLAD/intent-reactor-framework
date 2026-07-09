@@ -4,7 +4,6 @@ import com.intentreactor.api.SessionState;
 import com.intentreactor.api.SessionStore;
 import com.intentreactor.api.SimpleAction;
 import com.intentreactor.api.SimplePlanStep;
-import com.intentreactor.api.StepType;
 import com.intentreactor.api.ToolResult;
 import com.intentreactor.api.event.PlanStepCompletedEvent;
 import com.intentreactor.strategies.config.StrategySessionKeys;

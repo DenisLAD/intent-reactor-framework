@@ -11,5 +11,5 @@ Create a plan of at most {maxSteps} steps to achieve this sub-goal.
 
 Return a JSON array of steps:
 [
-  {"action": "Step description", "toolName": "tool_name", "parameters": {"param": "value"}}
+{"action": "Step description", "toolName": "tool_name", "parameters": {"param": "value"}}
 ]

@@ -14,10 +14,11 @@ public class SandTrainingRecord {
     private int selectedIndex;
     private LocalDateTime timestamp;
 
-    public SandTrainingRecord() {}
+    public SandTrainingRecord() {
+    }
 
     public SandTrainingRecord(String sessionId, int stepIndex, String goal, String contextSummary,
-                               List<Map<String, Object>> candidates, int selectedIndex) {
+                              List<Map<String, Object>> candidates, int selectedIndex) {
         this.sessionId = sessionId;
         this.stepIndex = stepIndex;
         this.goal = goal;
@@ -27,11 +28,31 @@ public class SandTrainingRecord {
         this.timestamp = LocalDateTime.now();
     }
 
-    public String getSessionId() { return sessionId; }
-    public int getStepIndex() { return stepIndex; }
-    public String getGoal() { return goal; }
-    public String getContextSummary() { return contextSummary; }
-    public List<Map<String, Object>> getCandidates() { return candidates; }
-    public int getSelectedIndex() { return selectedIndex; }
-    public LocalDateTime getTimestamp() { return timestamp; }
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public int getStepIndex() {
+        return stepIndex;
+    }
+
+    public String getGoal() {
+        return goal;
+    }
+
+    public String getContextSummary() {
+        return contextSummary;
+    }
+
+    public List<Map<String, Object>> getCandidates() {
+        return candidates;
+    }
+
+    public int getSelectedIndex() {
+        return selectedIndex;
+    }
+
+    public LocalDateTime getTimestamp() {
+        return timestamp;
+    }
 }
