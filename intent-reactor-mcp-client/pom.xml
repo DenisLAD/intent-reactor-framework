@@ -14,6 +14,30 @@
     <name>IntentReactor MCP Client</name>
     <description>Consumes external MCP server tools and exposes them as IntentReactor Tool instances</description>
 
+    <url>https://github.com/DenisLAD/intent-reactor-framework</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>Andreev Denis</name>
+            <email>lucifer.and.diablo@gmail.com</email>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git://github.com/DenisLAD/intent-reactor-framework.git</connection>
+        <developerConnection>scm:git:ssh://github.com/DenisLAD/intent-reactor-framework.git</developerConnection>
+        <url>https://github.com/DenisLAD/intent-reactor-framework</url>
+        <tag>HEAD</tag>
+    </scm>
+
     <dependencies>
         <!-- Public contracts only -->
         <dependency>
